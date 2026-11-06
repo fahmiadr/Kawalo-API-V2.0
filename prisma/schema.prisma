@@ -1,0 +1,549 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model chatconversations {
+  id                   BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  ms_user_email        String?        @db.VarChar(255)
+  target_ms_email      String?        @db.VarChar(255)
+  tk_user_id           Int?
+  firebase_ref_id      String?        @unique(map: "chatconversations_firebase_ref_id_unique") @db.VarChar(255)
+  last_message_preview String?        @db.Text
+  created_at           DateTime       @default(now()) @db.Timestamp(0)
+  updated_at           DateTime       @default(now()) @db.Timestamp(0)
+  chatmessages         chatmessages[]
+
+  @@unique([ms_user_email, target_ms_email], map: "uk_chat_ms_ms")
+  @@unique([ms_user_email, tk_user_id], map: "uk_chat_ms_tk")
+  @@index([ms_user_email], map: "chatconversations_ms_user_email_index")
+  @@index([target_ms_email], map: "chatconversations_target_ms_email_index")
+  @@index([tk_user_id], map: "chatconversations_tk_user_id_index")
+}
+
+model chatmessages {
+  id                BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  conversation_id   BigInt?                  @db.UnsignedBigInt
+  sender_type       chatmessages_sender_type
+  sender_ref_id     String                   @db.VarChar(255)
+  content           String                   @db.Text
+  is_read           Boolean?                 @default(false)
+  created_at        DateTime                 @default(now()) @db.Timestamp(0)
+  updated_at        DateTime                 @default(now()) @db.Timestamp(0)
+  chatconversations chatconversations?       @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "chatmessages_conversation_id_foreign")
+
+  @@index([conversation_id], map: "chatmessages_conversation_id_foreign")
+}
+
+model knex_migrations {
+  id             Int      @id @default(autoincrement()) @db.UnsignedInt
+  name           String?  @db.VarChar(255)
+  batch          Int?
+  migration_time DateTime @default(now()) @db.Timestamp(0)
+}
+
+model knex_migrations_lock {
+  index     Int  @id @default(autoincrement()) @db.UnsignedInt
+  is_locked Int?
+}
+
+model msgroup {
+  GroupID   Int    @id
+  GroupName String @db.VarChar(1024)
+  PriveId   String @db.VarChar(64)
+}
+
+model msuser {
+  Email            String       @id @db.VarChar(255)
+  Password         String       @db.VarChar(1024)
+  GroupId          Int
+  Roles            msuser_Roles @default(user)
+  ResetToken       String?      @db.VarChar(255)
+  ResetTokenExpiry BigInt?
+
+  @@index([GroupId], map: "idx_msuser_groupid")
+}
+
+model tbl_marks {
+  student_id   Int    @id @default(autoincrement()) @db.UnsignedInt
+  student_name String @db.VarChar(35)
+  marks        Int?   @default(0)
+}
+
+model tkabsen {
+  AbsenID       Int      @id @default(autoincrement())
+  AbsenEmail    String   @default("N/A") @db.VarChar(128)
+  AbsenName     String   @default("N/A") @db.VarChar(128)
+  AbsenDT       DateTime @default(now()) @db.Timestamp(0)
+  AbsenType     String   @default("REGISTER") @db.VarChar(128)
+  ALat          String   @default("N/A") @db.VarChar(32)
+  ALong         String   @default("N/A") @db.VarChar(32)
+  ADiffMins     Int      @default(0)
+  ALocation     String   @default("N/A") @db.VarChar(64)
+  AShiftUID     String   @default("N/A") @db.VarChar(32)
+  AbsenFunc     Int      @default(0)
+  AbsenGroupUID String?  @db.VarChar(64)
+  AShStart      String   @default("00:00:00") @db.VarChar(9)
+
+  @@index([AbsenDT], map: "idx_tkabsen_absendt")
+  @@index([AbsenEmail, AbsenDT], map: "idx_tkabsen_email_dt")
+  @@index([AbsenGroupUID], map: "idx_tkabsen_groupuid")
+}
+
+model tkcheckpoint {
+  CheckPointId  Int    @id @default(autoincrement())
+  CheckPointUID String @unique(map: "CheckPointUID") @db.VarChar(64)
+  CPGroupUID    String @db.VarChar(64)
+  CPName        String @db.VarChar(128)
+  CPType        String @db.VarChar(16)
+  CPGPSLat      String @db.VarChar(32)
+  CPGPSLong     String @db.VarChar(32)
+  CPWifiSSID    String @db.VarChar(32)
+  CPNFCIdentity String @db.VarChar(64)
+  CPQRIdentity  String @db.VarChar(128)
+  CPWifiMAC     String @db.VarChar(64)
+  CPDesc        String @db.VarChar(256)
+  UserScope     String @default("GUARD") @db.VarChar(15)
+  GPSRadius     Int    @default(10)
+}
+
+model tkdutyjourney {
+  DutyJourneyId  Int       @id @default(autoincrement())
+  DutyJourneyUID String    @db.VarChar(24)
+  DutyGroupUID   String    @db.VarChar(64)
+  DutyGroupName  String    @db.VarChar(64)
+  DutyDuty       String    @db.VarChar(8)
+  DutyState      String    @db.VarChar(32)
+  DutyDutyDT     DateTime  @default(now()) @db.Timestamp(0)
+  DutyStateDT    DateTime  @default(now()) @db.Timestamp(0)
+  UserEmail      String    @db.VarChar(128)
+  UserName       String    @db.VarChar(128)
+
+  @@index([DutyDutyDT], map: "idx_dutyjourney_dutydt")
+  @@index([DutyGroupUID, DutyJourneyId], map: "idx_dutyjourney_group_id")
+  @@index([DutyStateDT], map: "idx_dutyjourney_statedt")
+  @@index([DutyGroupUID, DutyDutyDT, UserEmail], map: "idx_dutyjourney_composite")
+}
+
+model tkfeed {
+  FeedId            Int       @id @default(autoincrement())
+  FeedUID           String    @unique(map: "FeedUID") @db.VarChar(64)
+  FeedTitle         String    @db.VarChar(128)
+  FeedText          String?   @db.VarChar(1024)
+  FeedByEmail       String    @db.VarChar(128)
+  FeedByName        String?   @db.VarChar(128)
+  FeedDT            DateTime  @default(now()) @db.Timestamp(0)
+  FeedFile          String?   @db.VarChar(2048)
+  FeedEventCal      String?   @db.VarChar(64)
+  FeedPic           String?   @db.VarChar(2048)
+  FeedType          String?   @db.VarChar(64)
+  FeedByProfilePic  String?   @db.VarChar(2048)
+  FeedGroupUID      String    @db.VarChar(64)
+  FeedGroupName     String?   @db.VarChar(128)
+  FeedEventLocation String?   @db.VarChar(128)
+  FeedEventStartDT  DateTime? @default(now()) @db.Timestamp(0)
+  FeedEventEndDT    DateTime? @default(now()) @db.Timestamp(0)
+  FeedEventDuration Int?
+  NetStatus         String?   @db.VarChar(8)
+  GLat              String?   @db.VarChar(32)
+  GLong             String?   @db.VarChar(32)
+  FeedPic2          String?   @db.VarChar(2048)
+  FeedPic3          String?   @db.VarChar(2048)
+  FeedPic4          String?   @db.VarChar(2048)
+
+  @@index([FeedGroupUID, FeedDT], map: "idx_tkfeed_group_dt")
+  @@index([FeedGroupUID, FeedByEmail], map: "idx_tkfeed_group_email")
+}
+
+model tkgpstracker {
+  GPTId      Int      @id @default(autoincrement())
+  GGroupUID  String?  @db.VarChar(128)
+  GEmail     String   @db.VarChar(128)
+  GName      String?  @db.VarChar(128)
+  GLat       String   @db.VarChar(64)
+  GLong      String   @db.VarChar(64)
+  GLatLongDT DateTime @default(now()) @db.Timestamp(0)
+}
+
+model tkgroup {
+  GroupId            Int      @id @default(autoincrement())
+  GroupUID           String   @unique(map: "unq_tkgroup_groupuid") @db.VarChar(64)
+  GroupName          String   @unique(map: "GroupName") @db.VarChar(128)
+  PatrolGPS          String   @default("YES") @db.VarChar(5)
+  PatrolWifi         String   @default("NO") @db.VarChar(5)
+  PatrolNFC          String   @default("NO") @db.VarChar(5)
+  PatrolQR           String   @default("YES") @db.VarChar(5)
+  GroupOwner         String   @db.VarChar(64)
+  LicNumCP           Int      @default(10)
+  LicNumUser         Int      @default(25)
+  LicNumPatrol       Int      @default(10)
+  LicWifi            String   @default("YES") @db.VarChar(5)
+  LicQR              String   @default("YES") @db.VarChar(5)
+  LicNFC             String   @default("NO") @db.VarChar(5)
+  LicGPS             String   @default("YES") @db.VarChar(5)
+  IdlePatrolMins     Int      @default(60)
+  LastPatrolWarning  DateTime @default(now()) @db.Timestamp(0)
+  IsPatrolWarning    String   @default("NO") @db.VarChar(5)
+  SubsStart          DateTime @default(now()) @db.Timestamp(0)
+  SubsEnd            DateTime @default(now()) @db.Timestamp(0)
+  Status             String   @default("TRIAL") @db.VarChar(8)
+  Address            String   @default("World") @db.VarChar(128)
+  EmailPatrolAlert   String   @default("NO") @db.VarChar(4)
+  EmailAlertAddr     String?  @db.VarChar(128)
+  CustomerID         String   @default("T9957") @db.VarChar(16)
+  Features           String   @default("PATROL;GUEST;") @db.VarChar(128)
+  TargetPatrolPerDay Int      @default(12)
+  TarPatDuraMin      Int      @default(30)
+  TarPatCntMin       Int      @default(10)
+  GroupLogo          String?  @db.VarChar(2048)
+  WaitCP             Int      @default(0)
+  MaxTripMins        Int      @default(7)
+  PhotoMarker        String   @default("YES") @db.VarChar(5)
+  AttMode            String   @default("MAX") @db.VarChar(5)
+}
+
+model tkguest {
+  GuestId              Int       @unique(map: "GuestId") @default(autoincrement())
+  GuestUID             String?   @unique(map: "GuestUID") @db.VarChar(64)
+  GuestGroupUID        String?   @db.VarChar(64)
+  GuestName            String?   @db.VarChar(128)
+  GuestIdentity        String?   @db.VarChar(64)
+  GuestPhoto           String?   @db.VarChar(2048)
+  GuestDT              DateTime  @default(now()) @db.Timestamp(0)
+  GuestPurpose         String?   @db.VarChar(128)
+  GuestToUserEmail     String?   @db.VarChar(128)
+  GuestOutDT           DateTime? @db.Timestamp(0)
+  GuestCategory        String?   @db.VarChar(32)
+  GuestIdentityType    String?   @db.VarChar(32)
+  QRUID                String?   @db.VarChar(64)
+  GuestNumber          String?   @db.VarChar(32)
+  GuestAddress         String?   @db.VarChar(512)
+  GuestCreatorEmail    String?   @db.VarChar(128)
+  GuestCreatorName     String?   @db.VarChar(128)
+  GuestDestination     String    @db.VarChar(128)
+  GuestType            String    @db.VarChar(64)
+  GuestCheckOutByEmail String?   @db.VarChar(128)
+  GuestAckDT           DateTime? @db.Timestamp(0)
+
+  @@index([GuestGroupUID, GuestDT], map: "idx_tkguest_group_dt")
+}
+
+model tkiuran {
+  IuranId      Int    @id @default(autoincrement())
+  Email        String @db.VarChar(64)
+  GroupUID     String @db.VarChar(64)
+  StartMonth   Int    @default(1)
+  StartYear    Int    @default(2000)
+  IuranPayment Int
+}
+
+model tkiuranpayment {
+  IuranPaymentId  Int      @id @default(autoincrement())
+  Email           String   @db.VarChar(64)
+  GroupUID        String   @db.VarChar(64)
+  PaymentForMonth Int
+  PaymentForYear  Int
+  PaymentDT       DateTime @default(now()) @db.Timestamp(0)
+  PaymentAmount   Int
+  Status          String   @default("WAITING") @db.VarChar(16)
+  PaymentFor      String?  @db.VarChar(64)
+  order_id        String   @db.VarChar(64)
+
+  @@unique([PaymentForMonth, PaymentForYear], map: "PaymentForMonth")
+}
+
+model tkmasterguesttype {
+  GuestTypeId       Int    @id @default(autoincrement())
+  GuestTypeUID      String @db.VarChar(64)
+  GuestTypeGroupUID String @db.VarChar(64)
+  GuestTypeName     String @db.VarChar(64)
+
+  @@unique([GuestTypeUID, GuestTypeGroupUID], map: "GuestTypeUID")
+}
+
+model tkmasterstate {
+  StateId       Int    @id @default(autoincrement())
+  StateUID      String @db.VarChar(64)
+  StateGroupUID String @db.VarChar(64)
+  StateName     String @db.VarChar(64)
+  StateLat      String @default("N/A") @db.VarChar(32)
+  StateLong     String @default("N/A") @db.VarChar(32)
+  StateRadius   Int    @default(20)
+
+  @@unique([StateUID, StateGroupUID], map: "StateUID")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model tknotification {
+  NotiId         Int      @id @default(autoincrement())
+  NotiUID        String   @unique(map: "NotiUID") @db.VarChar(64)
+  NotiUserEmail  String   @db.VarChar(128)
+  NotiTitle      String   @db.VarChar(128)
+  NotiMessage    String   @db.VarChar(256)
+  NotiType       String   @db.VarChar(32)
+  NotiRead       Boolean? @default(false)
+  NotiDT         DateTime @default(now()) @db.Timestamp(0)
+  NotiActionData String?  @db.LongText
+
+  @@index([NotiUserEmail, NotiType, NotiDT], map: "idx_notification_dedup")
+  @@index([NotiUserEmail, NotiDT], map: "idx_notification_user_dt")
+  @@index([NotiUserEmail, NotiRead], map: "idx_notification_user_read")
+}
+
+model tkpatrolevent {
+  PatEventId         Int      @id @default(autoincrement())
+  PatEventUID        String   @db.VarChar(64)
+  PatEventGroupUID   String   @db.VarChar(64)
+  PatEventGroupName  String   @db.VarChar(128)
+  PatEventGuardName  String   @db.VarChar(128)
+  PatEventGuardEmail String   @db.VarChar(128)
+  PatEventDT         DateTime @default(now()) @db.Timestamp(0)
+  PatEventNFC        String   @default("NO") @db.VarChar(5)
+  PatEventQR         String   @default("NO") @db.VarChar(5)
+  PatEventWIFI       String   @default("NO") @db.VarChar(5)
+  PatEventGPS        String   @default("NO") @db.VarChar(5)
+  TotalPatCPNum      Int      @default(0)
+  TotalPatCPPercent  String   @default("0") @db.VarChar(10)
+  TotalTripMin       Int      @default(0)
+  TotalTargetCP      Int      @default(0)
+  Point              String   @default("BAD") @db.VarChar(6)
+  TargetDuraMin      Int      @default(30)
+}
+
+model tkpatroljourney {
+  PatJourId              Int      @id @default(autoincrement())
+  PatJourUID             String   @unique(map: "PatJourUID") @db.VarChar(64)
+  PatJourEventUID        String   @db.VarChar(64)
+  PatJourGuardName       String   @db.VarChar(128)
+  PatJourGuardEmail      String   @db.VarChar(128)
+  PatJourDT              DateTime @default(now()) @db.Timestamp(0)
+  PatJourGPSLat          String   @db.VarChar(32)
+  PatJourGPSLong         String   @db.VarChar(32)
+  PatJourCheckPointName  String   @db.VarChar(64)
+  PatJourNearestWifiName String   @db.VarChar(64)
+  PatJourCheckPointType  String   @db.VarChar(16)
+  PatJourNFCID           String?  @db.VarChar(32)
+  PatJourQRID            String?  @db.VarChar(64)
+  PatJourNotes           String?  @db.VarChar(256)
+  Cam1                   String?  @db.VarChar(2048)
+  Cam2                   String?  @db.VarChar(2048)
+}
+
+model tkreporttemplate {
+  TmplId              Int      @id @default(autoincrement()) @db.UnsignedInt
+  TmplGroupUID        String   @db.VarChar(64)
+  TmplKataPengantar   String?  @db.Text
+  TmplMaksud          String?  @db.Text
+  TmplTujuan          String?  @db.Text
+  TmplPenutup         String?  @db.Text
+  TmplSignerName      String?  @db.VarChar(100)
+  TmplSignerTitle     String?  @db.VarChar(100)
+  TmplSignaturePath   String?  @db.VarChar(255)
+  TmplCoverPhoto1Path String?  @db.VarChar(255)
+  TmplCoverPhoto2Path String?  @db.VarChar(255)
+  TmplLogoPath        String?  @db.VarChar(255)
+  TmplCity            String?  @default("Jakarta") @db.VarChar(100)
+  TmplCreatedAt       DateTime @default(now()) @db.Timestamp(0)
+  TmplUpdatedAt       DateTime @default(now()) @db.Timestamp(0)
+  TmplName            String   @default("Default") @db.VarChar(100)
+  TmplLogoData        String?  @db.MediumText
+  TmplCoverPhoto1Data String?  @db.MediumText
+  TmplCoverPhoto2Data String?  @db.MediumText
+  TmplSignatureData   String?  @db.MediumText
+
+  @@unique([TmplGroupUID, TmplName], map: "tkreporttemplate_group_name_unique")
+}
+
+model tkrpatrolhourly {
+  PatHourlyId        Int      @id @default(autoincrement())
+  PatHourlyGroupUID  String   @db.VarChar(64)
+  PatHourlyGroupName String   @db.VarChar(128)
+  PatHourlyDT        DateTime @default(now()) @db.Timestamp(0)
+  PatHourMins0       Int      @default(0)
+  PatHourMins1       Int      @default(0)
+  PatHourMins2       Int      @default(0)
+  PatHourMins3       Int      @default(0)
+  PatHourMins4       Int      @default(0)
+  PatHourMins5       Int      @default(0)
+  PatHourMins6       Int      @default(0)
+  PatHourMins7       Int      @default(0)
+  PatHourMins8       Int      @default(0)
+  PatHourMins9       Int      @default(0)
+  PatHourMins10      Int      @default(0)
+  PatHourMins11      Int      @default(0)
+  PatHourMins12      Int      @default(0)
+  PatHourMins13      Int?     @default(0)
+  PatHourMins14      Int      @default(0)
+  PatHourMins15      Int      @default(0)
+  PatHourMins16      Int      @default(0)
+  PatHourMins17      Int      @default(0)
+  PatHourMins18      Int      @default(0)
+  PatHourMins19      Int      @default(0)
+  PatHourMins20      Int      @default(0)
+  PatHourMins21      Int      @default(0)
+  PatHourMins22      Int      @default(0)
+  PatHourMins23      Int      @default(0)
+  FinalMinutes       Int      @default(0)
+
+  @@unique([PatHourlyGroupUID, PatHourlyDT], map: "PatHourlyGroupUID")
+}
+
+model tkrpatuserhourly {
+  PatUserHourlyId        Int      @id @default(autoincrement())
+  PatUserHourlyGroupUID  String   @db.VarChar(64)
+  PatUserHourlyGroupName String   @db.VarChar(128)
+  PatUserHourlyDT        DateTime @default(now()) @db.Timestamp(0)
+  PatUserData0           String?  @db.VarChar(256)
+  PatUserData1           String?  @db.VarChar(256)
+  PatUserData2           String?  @db.VarChar(256)
+  PatUserData3           String?  @db.VarChar(256)
+  PatUserData4           String?  @db.VarChar(256)
+  PatUserData5           String?  @db.VarChar(256)
+  PatUserData6           String?  @db.VarChar(256)
+  PatUserData7           String?  @db.VarChar(256)
+  PatUserData8           String?  @db.VarChar(256)
+  PatUserData9           String?  @db.VarChar(256)
+  PatUserData10          String?  @db.VarChar(256)
+  PatUserData11          String?  @db.VarChar(256)
+  PatUserData12          String?  @db.VarChar(256)
+  PatUserData13          String?  @db.VarChar(256)
+  PatUserData14          String?  @db.VarChar(256)
+  PatUserData15          String?  @db.VarChar(256)
+  PatUserData16          String?  @db.VarChar(256)
+  PatUserData17          String?  @db.VarChar(256)
+  PatUserData18          String?  @db.VarChar(256)
+  PatUserData19          String?  @db.VarChar(256)
+  PatUserData20          String?  @db.VarChar(256)
+  PatUserData21          String?  @db.VarChar(256)
+  PatUserData22          String?  @db.VarChar(256)
+  PatUserData23          String?  @db.VarChar(256)
+  FinalNames             Int      @default(0)
+
+  @@unique([PatUserHourlyGroupUID, PatUserHourlyDT], map: "PatUserHourlyGroupUID")
+}
+
+model tkschedule {
+  SchedId       Int      @id @default(autoincrement())
+  SchedShiftUID String   @db.VarChar(32)
+  SDate         Int
+  SMonth        Int
+  SYear         Int
+  SFriendEmail  String   @db.VarChar(128)
+  SFriendName   String   @db.VarChar(128)
+  SGroupUID     String   @db.VarChar(64)
+  SchedDT       DateTime @default(now()) @db.Timestamp(0)
+  LateMins      Int      @default(0)
+  ACheckin      String?  @default("N/A") @db.VarChar(24)
+  ACheckout     String?  @default("N/A") @db.VarChar(24)
+
+  @@unique([SchedShiftUID, SFriendEmail, SDate, SMonth, SYear], map: "SchedShiftUID")
+}
+
+model tkshift {
+  ShiftId           Int     @id @default(autoincrement())
+  ShiftName         String  @db.VarChar(128)
+  ShiftTimeStart    Int
+  ShiftTimeStart_mm Int     @default(0)
+  ShiftTimeStop     Int
+  ShiftTimeStop_mm  Int     @default(0)
+  ShiftDesc         String? @default("N/A") @db.VarChar(128)
+  ShiftGroupUID     String  @db.VarChar(64)
+  ShiftColor        String  @db.VarChar(16)
+  ShiftUID          String  @unique(map: "ShiftUID") @db.VarChar(64)
+  LocName           String  @default("N/A") @db.VarChar(128)
+  LocLat            String  @default("N/A") @db.VarChar(32)
+  LocLong           String  @default("N/A") @db.VarChar(32)
+  LocRadius         Int     @default(0)
+}
+
+model tkuser {
+  UserId             Int      @id @default(autoincrement())
+  UserUID            String   @db.VarChar(64)
+  UserEmail          String   @unique(map: "Email") @db.VarChar(128)
+  UserName           String   @db.VarChar(128)
+  // CATATAN: Password saat ini disimpan dalam bentuk plaintext untuk kompatibilitas sistem legacy.
+  // Rencana migrasi hashing (Argon2id/Bcrypt) akan dilakukan pada fase keamanan selanjutnya.
+  Password           String   @db.VarChar(64)
+  FCMID              String   @default("none") @db.VarChar(512)
+  InstallId          String   @default("1.0.2.27") @db.VarChar(512)
+  UserProfilePic     String?  @db.VarChar(2048)
+  UserAddress        String?  @db.VarChar(128)
+  UserTitle          String?  @db.VarChar(32)
+  UserRT             String?  @db.VarChar(6)
+  UserRW             String?  @db.VarChar(6)
+  UserDesc           String?  @db.VarChar(128)
+  UserState          String?  @db.VarChar(32)
+  UserStateDT        DateTime @default(now()) @db.Timestamp(0)
+  UserLoc            String?  @db.VarChar(64)
+  UserLocDT          DateTime @default(now()) @db.Timestamp(0)
+  UserDuty           String   @default("OFF DUTY") @db.VarChar(16)
+  UserDutyDT         DateTime @default(now()) @db.Timestamp(0)
+  NotiGuestEmail     String   @default("NO") @db.VarChar(5)
+  NotiGuestEmailAddr String?  @db.VarChar(64)
+  Blok               String?  @db.VarChar(16)
+  BlokNumber         Int      @default(0)
+  HomeNumber         Int      @default(0)
+  HomeLetter         String?  @db.VarChar(4)
+  MyLat              String?  @default("N/A") @db.VarChar(64)
+  MyLong             String?  @default("N/A") @db.VarChar(64)
+  MyLatLongDT        DateTime @default(now()) @db.Timestamp(0)
+  FaceRegistered     String   @default("NO") @db.VarChar(5)
+}
+
+model tkusergroup {
+  UserGroupId    Int       @id @default(autoincrement())
+  Email          String    @db.VarChar(128)
+  GroupUID       String    @db.VarChar(64)
+  AllowAdmin     String    @default("NO") @db.VarChar(5)
+  AllowPatrol    String    @default("NO") @db.VarChar(5)
+  Category       String    @default("USER") @db.VarChar(16)
+  AllowMonPatrol String    @default("NO") @db.VarChar(5)
+  Status         String    @default("JOIN_WAIT") @db.VarChar(12)
+  JoinDate       DateTime? @default(now()) @db.DateTime(0)
+
+  @@unique([GroupUID, Email], map: "UserUID")
+  @@index([Email], map: "idx_tkusergroup_email")
+}
+
+model tkweeklyreport {
+  WeeklyId  Int      @id @default(autoincrement())
+  GroupUID  String   @db.VarChar(64)
+  ExecDT    DateTime @default(now()) @db.Timestamp(0)
+  FileName  String   @db.VarChar(64)
+  PDF_GEN   String   @default("NO") @db.VarChar(4)
+  MAIL_SENT String   @default("NO") @db.VarChar(4)
+  MAIL_ADDR String   @db.VarChar(64)
+}
+
+model trprive {
+  TrPriveId  Int    @id @default(autoincrement())
+  PriveId    String @db.VarChar(64)
+  TkGroupUID String @db.VarChar(64)
+
+  @@unique([PriveId, TkGroupUID], map: "unique_prive_tkgroup")
+  @@index([PriveId], map: "idx_triprive_priveid")
+}
+
+model winquiry {
+  InquiryId Int    @id @default(autoincrement())
+  Name      String @db.VarChar(64)
+  Email     String @db.VarChar(64)
+  Phone     String @db.VarChar(32)
+  Subject   String @db.VarChar(128)
+  Message   String @db.VarChar(256)
+}
+
+enum chatmessages_sender_type {
+  MS
+  TK
+}
+
+enum msuser_Roles {
+  superadmin
+  admin
+  user
+}
