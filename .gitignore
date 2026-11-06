@@ -1,0 +1,61 @@
+# ==============================================================================
+# Gitignore untuk Kawalo Mobile API (ElysiaJS + Prisma + TypeScript)
+# ==============================================================================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build outputs
+dist/
+build/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Environment variables & local overrides
+.env
+.env.local
+.env.*.local
+*.env.local
+*.env.bak
+*.env.temp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# IDEs & Editors
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+*.sublime-project
+*.sublime-workspace
+
+# Operating System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
