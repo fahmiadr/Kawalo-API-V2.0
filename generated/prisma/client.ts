@@ -112,6 +112,16 @@ export type tkgroup = Prisma.tkgroupModel
  */
 export type tkguest = Prisma.tkguestModel
 /**
+ * Model tkincident
+ * 
+ */
+export type tkincident = Prisma.tkincidentModel
+/**
+ * Model tkincidentreply
+ * 
+ */
+export type tkincidentreply = Prisma.tkincidentreplyModel
+/**
  * Model tkiuran
  * 
  */

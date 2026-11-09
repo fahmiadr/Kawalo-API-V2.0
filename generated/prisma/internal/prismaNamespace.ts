@@ -411,6 +411,8 @@ export const ModelName = {
   tkgpstracker: 'tkgpstracker',
   tkgroup: 'tkgroup',
   tkguest: 'tkguest',
+  tkincident: 'tkincident',
+  tkincidentreply: 'tkincidentreply',
   tkiuran: 'tkiuran',
   tkiuranpayment: 'tkiuranpayment',
   tkmasterguesttype: 'tkmasterguesttype',
@@ -443,7 +445,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "chatconversations" | "chatmessages" | "knex_migrations" | "knex_migrations_lock" | "msgroup" | "msuser" | "tbl_marks" | "tkabsen" | "tkcheckpoint" | "tkdutyjourney" | "tkfeed" | "tkgpstracker" | "tkgroup" | "tkguest" | "tkiuran" | "tkiuranpayment" | "tkmasterguesttype" | "tkmasterstate" | "tknotification" | "tkpatrolevent" | "tkpatroljourney" | "tkreporttemplate" | "tkrpatrolhourly" | "tkrpatuserhourly" | "tkschedule" | "tkshift" | "tkuser" | "tkusergroup" | "tkweeklyreport" | "trprive" | "winquiry"
+    modelProps: "chatconversations" | "chatmessages" | "knex_migrations" | "knex_migrations_lock" | "msgroup" | "msuser" | "tbl_marks" | "tkabsen" | "tkcheckpoint" | "tkdutyjourney" | "tkfeed" | "tkgpstracker" | "tkgroup" | "tkguest" | "tkincident" | "tkincidentreply" | "tkiuran" | "tkiuranpayment" | "tkmasterguesttype" | "tkmasterstate" | "tknotification" | "tkpatrolevent" | "tkpatroljourney" | "tkreporttemplate" | "tkrpatrolhourly" | "tkrpatuserhourly" | "tkschedule" | "tkshift" | "tkuser" | "tkusergroup" | "tkweeklyreport" | "trprive" | "winquiry"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1368,6 +1370,138 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.tkguestCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.TkguestCountAggregateOutputType> | number
+        }
+      }
+    }
+    tkincident: {
+      payload: Prisma.$tkincidentPayload<ExtArgs>
+      fields: Prisma.tkincidentFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.tkincidentFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.tkincidentFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        findFirst: {
+          args: Prisma.tkincidentFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.tkincidentFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        findMany: {
+          args: Prisma.tkincidentFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>[]
+        }
+        create: {
+          args: Prisma.tkincidentCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        createMany: {
+          args: Prisma.tkincidentCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        delete: {
+          args: Prisma.tkincidentDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        update: {
+          args: Prisma.tkincidentUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        deleteMany: {
+          args: Prisma.tkincidentDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.tkincidentUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        upsert: {
+          args: Prisma.tkincidentUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentPayload>
+        }
+        aggregate: {
+          args: Prisma.TkincidentAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateTkincident>
+        }
+        groupBy: {
+          args: Prisma.tkincidentGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TkincidentGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.tkincidentCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TkincidentCountAggregateOutputType> | number
+        }
+      }
+    }
+    tkincidentreply: {
+      payload: Prisma.$tkincidentreplyPayload<ExtArgs>
+      fields: Prisma.tkincidentreplyFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.tkincidentreplyFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.tkincidentreplyFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        findFirst: {
+          args: Prisma.tkincidentreplyFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.tkincidentreplyFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        findMany: {
+          args: Prisma.tkincidentreplyFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>[]
+        }
+        create: {
+          args: Prisma.tkincidentreplyCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        createMany: {
+          args: Prisma.tkincidentreplyCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        delete: {
+          args: Prisma.tkincidentreplyDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        update: {
+          args: Prisma.tkincidentreplyUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        deleteMany: {
+          args: Prisma.tkincidentreplyDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.tkincidentreplyUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        upsert: {
+          args: Prisma.tkincidentreplyUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$tkincidentreplyPayload>
+        }
+        aggregate: {
+          args: Prisma.TkincidentreplyAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateTkincidentreply>
+        }
+        groupBy: {
+          args: Prisma.tkincidentreplyGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TkincidentreplyGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.tkincidentreplyCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TkincidentreplyCountAggregateOutputType> | number
         }
       }
     }
@@ -2773,6 +2907,43 @@ export const TkguestScalarFieldEnum = {
 export type TkguestScalarFieldEnum = (typeof TkguestScalarFieldEnum)[keyof typeof TkguestScalarFieldEnum]
 
 
+export const TkincidentScalarFieldEnum = {
+  IncidentUID: 'IncidentUID',
+  GroupUID: 'GroupUID',
+  Title: 'Title',
+  Description: 'Description',
+  Category: 'Category',
+  GLat: 'GLat',
+  GLong: 'GLong',
+  Photos: 'Photos',
+  Status: 'Status',
+  CreatedByEmail: 'CreatedByEmail',
+  CreatedByName: 'CreatedByName',
+  ResolvedByEmail: 'ResolvedByEmail',
+  ResolvedByName: 'ResolvedByName',
+  ResolvedAt: 'ResolvedAt',
+  DeletedAt: 'DeletedAt',
+  CreatedAt: 'CreatedAt',
+  UpdatedAt: 'UpdatedAt'
+} as const
+
+export type TkincidentScalarFieldEnum = (typeof TkincidentScalarFieldEnum)[keyof typeof TkincidentScalarFieldEnum]
+
+
+export const TkincidentreplyScalarFieldEnum = {
+  ReplyUID: 'ReplyUID',
+  IncidentUID: 'IncidentUID',
+  SenderEmail: 'SenderEmail',
+  SenderName: 'SenderName',
+  SenderRole: 'SenderRole',
+  Message: 'Message',
+  Photos: 'Photos',
+  CreatedAt: 'CreatedAt'
+} as const
+
+export type TkincidentreplyScalarFieldEnum = (typeof TkincidentreplyScalarFieldEnum)[keyof typeof TkincidentreplyScalarFieldEnum]
+
+
 export const TkiuranScalarFieldEnum = {
   IuranId: 'IuranId',
   Email: 'Email',
@@ -3299,6 +3470,36 @@ export const tkguestOrderByRelevanceFieldEnum = {
 export type tkguestOrderByRelevanceFieldEnum = (typeof tkguestOrderByRelevanceFieldEnum)[keyof typeof tkguestOrderByRelevanceFieldEnum]
 
 
+export const tkincidentOrderByRelevanceFieldEnum = {
+  IncidentUID: 'IncidentUID',
+  GroupUID: 'GroupUID',
+  Title: 'Title',
+  Description: 'Description',
+  Category: 'Category',
+  Photos: 'Photos',
+  Status: 'Status',
+  CreatedByEmail: 'CreatedByEmail',
+  CreatedByName: 'CreatedByName',
+  ResolvedByEmail: 'ResolvedByEmail',
+  ResolvedByName: 'ResolvedByName'
+} as const
+
+export type tkincidentOrderByRelevanceFieldEnum = (typeof tkincidentOrderByRelevanceFieldEnum)[keyof typeof tkincidentOrderByRelevanceFieldEnum]
+
+
+export const tkincidentreplyOrderByRelevanceFieldEnum = {
+  ReplyUID: 'ReplyUID',
+  IncidentUID: 'IncidentUID',
+  SenderEmail: 'SenderEmail',
+  SenderName: 'SenderName',
+  SenderRole: 'SenderRole',
+  Message: 'Message',
+  Photos: 'Photos'
+} as const
+
+export type tkincidentreplyOrderByRelevanceFieldEnum = (typeof tkincidentreplyOrderByRelevanceFieldEnum)[keyof typeof tkincidentreplyOrderByRelevanceFieldEnum]
+
+
 export const tkiuranOrderByRelevanceFieldEnum = {
   Email: 'Email',
   GroupUID: 'GroupUID'
@@ -3773,6 +3974,8 @@ export type GlobalOmitConfig = {
   tkgpstracker?: Prisma.tkgpstrackerOmit
   tkgroup?: Prisma.tkgroupOmit
   tkguest?: Prisma.tkguestOmit
+  tkincident?: Prisma.tkincidentOmit
+  tkincidentreply?: Prisma.tkincidentreplyOmit
   tkiuran?: Prisma.tkiuranOmit
   tkiuranpayment?: Prisma.tkiuranpaymentOmit
   tkmasterguesttype?: Prisma.tkmasterguesttypeOmit

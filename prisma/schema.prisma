@@ -232,6 +232,41 @@ model tkguest {
   @@index([GuestGroupUID, GuestDT], map: "idx_tkguest_group_dt")
 }
 
+model tkincident {
+  IncidentUID     String    @id @db.VarChar(64)
+  GroupUID        String    @db.VarChar(64)
+  Title           String    @db.VarChar(128)
+  Description     String?   @db.VarChar(1024)
+  Category        String    @default("general") @db.VarChar(16)
+  GLat            Float?    @db.Double
+  GLong           Float?    @db.Double
+  Photos          String?   @db.Text
+  Status          String    @default("OPEN") @db.VarChar(16)
+  CreatedByEmail  String    @db.VarChar(128)
+  CreatedByName   String?   @db.VarChar(128)
+  ResolvedByEmail String?   @db.VarChar(128)
+  ResolvedByName  String?   @db.VarChar(128)
+  ResolvedAt      DateTime? @db.Timestamp(0)
+  DeletedAt       DateTime? @db.Timestamp(0)
+  CreatedAt       DateTime  @default(now()) @db.Timestamp(0)
+  UpdatedAt       DateTime  @default(now()) @db.Timestamp(0)
+
+  @@index([GroupUID, Status, CreatedAt], map: "idx_tkincident_group_status_dt")
+}
+
+model tkincidentreply {
+  ReplyUID    String   @id @db.VarChar(64)
+  IncidentUID String   @db.VarChar(64)
+  SenderEmail String   @db.VarChar(128)
+  SenderName  String   @db.VarChar(128)
+  SenderRole  String   @db.VarChar(16)
+  Message     String   @db.Text
+  Photos      String?  @db.Text
+  CreatedAt   DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([IncidentUID, ReplyUID], map: "idx_tkincidentreply_incident")
+}
+
 model tkiuran {
   IuranId      Int    @id @default(autoincrement())
   Email        String @db.VarChar(64)

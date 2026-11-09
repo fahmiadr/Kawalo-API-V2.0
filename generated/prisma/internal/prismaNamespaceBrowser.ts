@@ -65,6 +65,8 @@ export const ModelName = {
   tkgpstracker: 'tkgpstracker',
   tkgroup: 'tkgroup',
   tkguest: 'tkguest',
+  tkincident: 'tkincident',
+  tkincidentreply: 'tkincidentreply',
   tkiuran: 'tkiuran',
   tkiuranpayment: 'tkiuranpayment',
   tkmasterguesttype: 'tkmasterguesttype',
@@ -339,6 +341,43 @@ export const TkguestScalarFieldEnum = {
 } as const
 
 export type TkguestScalarFieldEnum = (typeof TkguestScalarFieldEnum)[keyof typeof TkguestScalarFieldEnum]
+
+
+export const TkincidentScalarFieldEnum = {
+  IncidentUID: 'IncidentUID',
+  GroupUID: 'GroupUID',
+  Title: 'Title',
+  Description: 'Description',
+  Category: 'Category',
+  GLat: 'GLat',
+  GLong: 'GLong',
+  Photos: 'Photos',
+  Status: 'Status',
+  CreatedByEmail: 'CreatedByEmail',
+  CreatedByName: 'CreatedByName',
+  ResolvedByEmail: 'ResolvedByEmail',
+  ResolvedByName: 'ResolvedByName',
+  ResolvedAt: 'ResolvedAt',
+  DeletedAt: 'DeletedAt',
+  CreatedAt: 'CreatedAt',
+  UpdatedAt: 'UpdatedAt'
+} as const
+
+export type TkincidentScalarFieldEnum = (typeof TkincidentScalarFieldEnum)[keyof typeof TkincidentScalarFieldEnum]
+
+
+export const TkincidentreplyScalarFieldEnum = {
+  ReplyUID: 'ReplyUID',
+  IncidentUID: 'IncidentUID',
+  SenderEmail: 'SenderEmail',
+  SenderName: 'SenderName',
+  SenderRole: 'SenderRole',
+  Message: 'Message',
+  Photos: 'Photos',
+  CreatedAt: 'CreatedAt'
+} as const
+
+export type TkincidentreplyScalarFieldEnum = (typeof TkincidentreplyScalarFieldEnum)[keyof typeof TkincidentreplyScalarFieldEnum]
 
 
 export const TkiuranScalarFieldEnum = {
@@ -865,6 +904,36 @@ export const tkguestOrderByRelevanceFieldEnum = {
 } as const
 
 export type tkguestOrderByRelevanceFieldEnum = (typeof tkguestOrderByRelevanceFieldEnum)[keyof typeof tkguestOrderByRelevanceFieldEnum]
+
+
+export const tkincidentOrderByRelevanceFieldEnum = {
+  IncidentUID: 'IncidentUID',
+  GroupUID: 'GroupUID',
+  Title: 'Title',
+  Description: 'Description',
+  Category: 'Category',
+  Photos: 'Photos',
+  Status: 'Status',
+  CreatedByEmail: 'CreatedByEmail',
+  CreatedByName: 'CreatedByName',
+  ResolvedByEmail: 'ResolvedByEmail',
+  ResolvedByName: 'ResolvedByName'
+} as const
+
+export type tkincidentOrderByRelevanceFieldEnum = (typeof tkincidentOrderByRelevanceFieldEnum)[keyof typeof tkincidentOrderByRelevanceFieldEnum]
+
+
+export const tkincidentreplyOrderByRelevanceFieldEnum = {
+  ReplyUID: 'ReplyUID',
+  IncidentUID: 'IncidentUID',
+  SenderEmail: 'SenderEmail',
+  SenderName: 'SenderName',
+  SenderRole: 'SenderRole',
+  Message: 'Message',
+  Photos: 'Photos'
+} as const
+
+export type tkincidentreplyOrderByRelevanceFieldEnum = (typeof tkincidentreplyOrderByRelevanceFieldEnum)[keyof typeof tkincidentreplyOrderByRelevanceFieldEnum]
 
 
 export const tkiuranOrderByRelevanceFieldEnum = {
