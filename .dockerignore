@@ -1,0 +1,16 @@
+.git
+.claude
+.code-review-graph
+target
+node_modules
+tests
+tools
+examples
+scripts
+prisma
+README.md
+.env
+.env.*
+!.env.example
+certs
+data.sql
