@@ -77,6 +77,17 @@ Biaya: satu verifikasi Argon2id (~19 MiB, puluhan ms CPU) per login selama fase 
 (pola yang sama dengan penandatanganan RSA). Setiap login gagal juga menghabiskan satu verifikasi, nyata atau dummy (hash tetap dengan parameter saat ini),
 sehingga waktu respons tidak membedakan email tak dikenal dari password salah.
 
+Dampak pada throughput login (Apple M1 Pro 10 core, `tools/bench`, `--scenarios login`, akun yang sudah ber-hash; rinci di `tools/bench/results/login-argon2id.md`):
+
+| konkurensi | sebelum (rps / p99 ms) | sesudah (rps / p99 ms) | RSS puncak sebelum / sesudah |
+| :--- | :--- | :--- | :--- |
+| 1 | 218 / 6,4 | 49 / 23,5 | 12 / 31 MB |
+| 16 | 1720 / 21 | 339 / 95 | 24 / 245 MB |
+| 64 | 1830 / 56 | 352 / 250 | 32 / 257 MB |
+
+Login turun sekitar 5x (satu verifikasi Argon2id ~20 ms per login) dan RSS puncak naik sekitar 19 MiB per slot hash yang aktif (maksimum = jumlah core).
+Endpoint lain tidak terpengaruh.
+
 Urutan rilis: (1) terapkan migrasi ke database (`npm run prisma:migrate:deploy`), (2) baru rilis biner baru. Biner baru men-`SELECT PasswordHash`,
 jadi tanpa migrasi login mengembalikan 500. Pembatalan: deploy ulang biner lama; kolom boleh dibiarkan karena biner lama tidak membacanya dan `Password` tidak pernah disentuh.
 
