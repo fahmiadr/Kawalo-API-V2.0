@@ -180,9 +180,15 @@ setelah warm-up, median 3 run, error 0%. Kedua server memakai MariaDB dan Redis 
 | Detail insiden | 1 | 1.360 | 3.732 | 2,7x | 1,37 | 0,39 |
 | | 16 | 3.526 | 16.118 | 4,6x | 6,96 | 1,42 |
 | | 64 | 3.373 | 16.082 | 4,8x | 23,84 | 5,21 |
-| Login (RS256) | 1 | 178 | 214 | 1,2x | 7,50 | 5,90 |
-| | 16 | 1.107 | 2.011 | 1,8x | 16,37 | 15,40 |
-| | 64 | 1.110 | 2.071 | 1,9x | 62,95 | 43,70 |
+| Login* | 1 | 178 | 49 | 0,28x | 7,50 | 23,5 |
+| | 16 | 1.107 | 339 | 0,31x | 16,37 | 95 |
+| | 64 | 1.110 | 352 | 0,32x | 62,95 | 250 |
+
+\* **Login memang lebih lambat di Rust, dan itu disengaja.** TypeScript membandingkan password sebagai plaintext (tanpa hashing),
+sedangkan Rust kini memverifikasi hash Argon2id (sekitar 20 ms per login) demi keamanan. Sebelum Argon2id ditambahkan, login Rust
+(hanya tanda tangan RS256) mencapai 214, 2.011, dan 2.071 rps pada konkurensi 1, 16, dan 64, yaitu 1,2x sampai 1,9x dari TypeScript.
+Angka Rust di baris ini diukur di run terpisah dari angka TypeScript (beban mesin berbeda), jadi bandingkan sebagai perkiraan.
+Rincian ada di bagian "Password: Argon2id" dan `tools/bench/results/login-argon2id.md`.
 
 Skenario lain, dari run pertama (Rust sebelum optimasi jalur auth; belum diukur ulang, jadi angka Rust kemungkinan lebih baik sekarang),
 pada konkurensi 64:
@@ -210,7 +216,7 @@ keunggulannya ada di memori, bukan CPU.
 
 **Yang membuat Rust lebih cepat di jalur terautentikasi:** verifikasi JWT RS256 memakai `aws-lc-rs` dengan cache hasil verifikasi sampai
 `exp` (cek `session_ver` ke Redis tetap tiap request), alokator `mimalloc`, dan pool sqlx yang tidak melakukan ping pada tiap acquire.
-Backend RSA murni-Rust yang dipakai pada versi awal justru membuat login dan request terautentikasi lebih lambat dari TypeScript.
+Backend RSA murni-Rust yang dipakai pada versi awal justru membuat login dan request terautentikasi lebih lambat dari TypeScript. Endpoint selain login tidak terpengaruh oleh Argon2id.
 
 **Cara membaca angka ini:** ini perbandingan relatif pada satu mesin, bukan angka produksi absolut. Generator beban, server, MariaDB, dan
 Redis berbagi mesin tanpa TLS atau proxy. Beban CPU lain di mesin (IDE, server dev) ikut memengaruhi hasil. Loop tertutup membuat latensi
