@@ -115,10 +115,13 @@ pub async fn detail(
     State(state): State<AppState>,
 ) -> ApiResult<IncidentDetail> {
     let group_uid = user.require_group_uid()?;
-    let incident = repository::find(&state.db, &id.0, group_uid)
-        .await?
-        .ok_or_else(not_found)?;
-    let replies = repository::replies(&state.db, &incident.id).await?;
+    // The replies key is the requested id, which equals the row's id whenever the incident exists,
+    // so both reads can run at once.
+    let (incident, replies) = tokio::try_join!(
+        repository::find(&state.db, &id.0, group_uid),
+        repository::replies(&state.db, &id.0),
+    )?;
+    let incident = incident.ok_or_else(not_found)?;
     ok(
         IncidentDetail {
             replies: replies.iter().map(ReplyItem::from).collect(),

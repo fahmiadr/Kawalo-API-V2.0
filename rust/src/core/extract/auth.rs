@@ -173,8 +173,10 @@ pub async fn authenticate_token(state: &AppState, token: &str) -> Result<Auth, A
 /// `Bearer <token>` from the headers; `None` for a missing prefix or empty token.
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let prefix = format!("{AUTH_TOKEN_TYPE} ");
-    let token = value.strip_prefix(prefix.as_str())?.trim();
+    let token = value
+        .strip_prefix(AUTH_TOKEN_TYPE)?
+        .strip_prefix(' ')?
+        .trim();
     (!token.is_empty()).then_some(token)
 }
 

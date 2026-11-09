@@ -50,7 +50,9 @@ pub fn clean_string(val: Option<&str>) -> Option<String> {
     if matches!(trimmed, "" | "N/A" | "null") {
         return None;
     }
-    Some(if EMAIL.is_match(trimmed) {
+    // The '@' test is a cheap pre-filter: the grammar needs one, and the regex is the hot spot of
+    // list responses that clean hundreds of strings.
+    Some(if trimmed.contains('@') && EMAIL.is_match(trimmed) {
         trimmed.to_lowercase()
     } else {
         trimmed.to_owned()
