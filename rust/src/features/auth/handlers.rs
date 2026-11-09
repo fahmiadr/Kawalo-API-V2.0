@@ -12,7 +12,7 @@ use crate::core::error::{ApiError, ErrorCode};
 use crate::core::extract::{Auth, AuthedJson, ValidatedJson};
 use crate::core::response::{ApiResult, ok};
 use crate::core::security::{
-    JwtUserPayload, generate_refresh_token, hash_token, sign_access_token,
+    JwtUserPayload, generate_refresh_token, hash_token, sign_access_token_blocking,
 };
 use crate::core::state::AppState;
 use crate::features::auth::dto::{
@@ -66,13 +66,8 @@ async fn mint_tokens(
         allow_mon_patrol: group.allow_mon_patrol,
         session_ver,
     };
-    // An RSA-4096 signature takes about 3 ms of CPU, which would stall every request queued on
-    // this worker thread.
-    let (keys, expires_in) = (state.keys.clone(), state.config.jwt_expires_in);
     let signed =
-        tokio::task::spawn_blocking(move || sign_access_token(&keys, expires_in, &payload))
-            .await
-            .map_err(ApiError::internal)??;
+        sign_access_token_blocking(&state.keys, state.config.jwt_expires_in, payload).await?;
     let refresh_token = generate_refresh_token();
     let hash = hash_token(&refresh_token);
     let tokens = Tokens {

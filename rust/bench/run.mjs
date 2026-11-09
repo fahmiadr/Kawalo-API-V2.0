@@ -60,7 +60,7 @@ const median = (xs) => {
 
 // ---------- scratch services helpers ----------
 const sql = (q) => execFileSync('mariadb', ['--no-defaults', '-uroot', `--socket=${DB_SOCK}`, 'kawalo_bench', '-e', q]);
-const redisCli = (...a) => execFileSync('redis-cli', ['-p', REDIS_PORT, ...a]).toString();
+const redisCli = (...a) => execFileSync('redis-cli', ['-p', REDIS_PORT, ...a], { maxBuffer: 1 << 30 }).toString();
 const resetIncidents = () => sql('TRUNCATE tkincidentreply; TRUNCATE tkincident;');
 const resetLoginState = () => {
   const keys = redisCli('--scan', '--pattern', 'auth:refresh:*').split('\n')

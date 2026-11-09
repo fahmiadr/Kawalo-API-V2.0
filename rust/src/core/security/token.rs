@@ -5,7 +5,12 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::num::NonZeroUsize;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+
+use tokio::sync::Semaphore;
 
 use aws_lc_rs::error::Unspecified;
 use aws_lc_rs::rand::SystemRandom;
@@ -33,6 +38,8 @@ pub enum TokenError {
     Sign(Unspecified),
     #[error("serialising the token failed: {0}")]
     Encode(#[from] serde_json::Error),
+    #[error("signing task failed: {0}")]
+    Join(#[from] tokio::task::JoinError),
 }
 
 impl From<TokenError> for ApiError {
@@ -84,6 +91,33 @@ struct Claims<'a> {
     aud: &'static str,
     iat: u64,
     exp: u64,
+}
+
+/// Signatures running at once; more would only time-share the cores and stretch every one of them.
+static SIGNING_SLOTS: LazyLock<Semaphore> = LazyLock::new(|| {
+    Semaphore::new(
+        thread::available_parallelism()
+            .map_or(2, NonZeroUsize::get)
+            .max(2),
+    )
+});
+
+/// [`sign_access_token`] on a blocking thread, so the 3 ms of RSA-4096 work does not stall the
+/// async workers; waiting callers are served in arrival order.
+///
+/// # Errors
+/// Same as [`sign_access_token`], plus [`TokenError::Join`] if the signing task panicked.
+pub async fn sign_access_token_blocking(
+    keys: &RsaKeyManager,
+    expires_in: u64,
+    payload: JwtUserPayload,
+) -> Result<SignedToken, TokenError> {
+    let _slot = SIGNING_SLOTS
+        .acquire()
+        .await
+        .expect("the signing semaphore is never closed");
+    let keys = keys.clone();
+    tokio::task::spawn_blocking(move || sign_access_token(&keys, expires_in, &payload)).await?
 }
 
 /// Issues an access token valid for `expires_in` seconds.
@@ -433,6 +467,26 @@ mod tests {
             cache.get(&live, cache.epoch()).is_none(),
             "a verification that started before the change must not be served after it"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_blocking_signatures_all_verify() {
+        let (_dir, keys) = keys();
+        let signing: Vec<_> = (0..12)
+            .map(|n| {
+                let keys = keys.clone();
+                let payload = JwtUserPayload {
+                    sub: Some(format!("usr-{n}")),
+                    ..payload()
+                };
+                tokio::spawn(async move { sign_access_token_blocking(&keys, 900, payload).await })
+            })
+            .collect();
+        for (n, task) in signing.into_iter().enumerate() {
+            let token = task.await.expect("task").expect("sign").token;
+            let verified = verify_access_token(&keys, &token).expect("verify");
+            assert_eq!(verified.sub, Some(format!("usr-{n}")));
+        }
     }
 
     #[test]

@@ -9,5 +9,5 @@ pub use rsa_key::{Jwk, Jwks, KeyError, RsaKeyManager};
 pub use session_version::SessionVersions;
 pub use token::{
     JwtUserPayload, SignedToken, TokenError, generate_refresh_token, hash_token, sign_access_token,
-    verify_access_token,
+    sign_access_token_blocking, verify_access_token,
 };
