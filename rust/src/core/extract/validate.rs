@@ -29,6 +29,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use super::numeric::Numeric;
+
 /// The `email` format of TypeBox as registered by Elysia.
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -54,8 +56,15 @@ struct FieldError {
 }
 
 /// Collected constraint violations; displays as `/path: message, /path: message`.
+///
+/// Numeric query parameters are checked in two stages like Elysia: format errors are listed with
+/// the others, but a range violation of the decoded number is only reported (alone, without a
+/// path) when everything else passed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ValidationErrors(Vec<FieldError>);
+pub struct ValidationErrors {
+    errors: Vec<FieldError>,
+    decoded: Vec<FieldError>,
+}
 
 impl ValidationErrors {
     pub fn new() -> Self {
@@ -65,14 +74,37 @@ impl ValidationErrors {
     /// Records a violation. `path` is a field name (`title`) or a pointer (`photos/0`); the
     /// leading `/` is added.
     pub fn push(&mut self, path: &str, message: impl Into<String>) {
-        self.0.push(FieldError {
+        self.errors.push(FieldError {
             path: format!("/{}", path.trim_start_matches('/')),
             message: message.into(),
         });
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.errors.is_empty() && self.decoded.is_empty()
+    }
+
+    /// An optional `t.Numeric` parameter with `bounds`; see the type docs for the two stages.
+    pub fn numeric(&mut self, path: &str, value: Option<Numeric>, bounds: impl RangeBounds<f64>) {
+        let n = match value {
+            None => return,
+            Some(Numeric::Invalid) => {
+                self.push(
+                    path,
+                    format!("Property '{path}' should be one of: 'numeric', 'number'"),
+                );
+                return;
+            }
+            Some(Numeric::Value(n)) => n,
+        };
+        let mut range = Self::new();
+        range.range(path, n, bounds);
+        // The decoded value has no property path, hence the empty path.
+        self.decoded
+            .extend(range.errors.into_iter().map(|e| FieldError {
+                path: String::new(),
+                message: e.message,
+            }));
     }
 
     /// `Ok(())` when nothing was recorded.
@@ -182,7 +214,12 @@ impl ValidationErrors {
 
 impl fmt::Display for ValidationErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, e) in self.0.iter().enumerate() {
+        let shown = if self.errors.is_empty() {
+            self.decoded.get(..1).unwrap_or_default()
+        } else {
+            &self.errors
+        };
+        for (i, e) in shown.iter().enumerate() {
             if i > 0 {
                 f.write_str(", ")?;
             }

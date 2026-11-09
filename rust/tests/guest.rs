@@ -556,17 +556,11 @@ async fn list_filters_search_order_and_paging() {
     assert_eq!(guest["guest_checkout_by_name"], "Satpam Satu");
 
     for (query, detail) in [
-        (
-            "?limit=101",
-            "/limit: Expected number to be less or equal to 100",
-        ),
-        (
-            "?limit=-1",
-            "/limit: Expected number to be greater or equal to 0",
-        ),
+        ("?limit=101", ": Expected number to be less or equal to 100"),
+        ("?limit=-1", ": Expected number to be greater or equal to 0"),
         (
             "?offset=-1",
-            "/offset: Expected number to be greater or equal to 0",
+            ": Expected number to be greater or equal to 0",
         ),
         (
             "?search=",
@@ -576,7 +570,10 @@ async fn list_filters_search_order_and_paging() {
             "?created_by=",
             "/created_by: Expected string length greater or equal to 1",
         ),
-        ("?is_active=maybe", "/is_active: Expected union value"),
+        (
+            "?is_active=maybe",
+            "/is_active: Property 'is_active' should be one of: 'boolean', 'undefined'",
+        ),
     ] {
         let (status, body) = get(query).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}: {body}");

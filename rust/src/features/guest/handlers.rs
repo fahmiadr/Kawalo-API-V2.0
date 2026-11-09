@@ -7,7 +7,7 @@ use crate::core::clean::{
     Patch, clean_boolean, clean_date, clean_integer, clean_string, clean_update_string,
 };
 use crate::core::error::ApiError;
-use crate::core::extract::{AuthedJson, CurrentUser};
+use crate::core::extract::{AuthedJson, CurrentUser, Numeric, ValidatedQuery};
 use crate::core::pagination::{Pagination, PaginationParams, resolve_pagination};
 use crate::core::response::{ApiResult, created, ok};
 use crate::core::state::AppState;
@@ -81,7 +81,7 @@ pub async fn master_types(
 
 pub async fn list(
     State(state): State<AppState>,
-    query: ListQuery,
+    ValidatedQuery(query): ValidatedQuery<ListQuery>,
     user: CurrentUser,
 ) -> ApiResult<Vec<GuestItem>> {
     let Some(group) = group_of(&user) else {
@@ -89,7 +89,10 @@ pub async fn list(
     };
     let filter = GuestFilter {
         search: clean_string(query.search.as_deref()),
-        page: double_resolved_page(query.limit, query.offset),
+        page: double_resolved_page(
+            query.limit.and_then(Numeric::value),
+            query.offset.and_then(Numeric::value),
+        ),
         start: query.start_date.as_deref().and_then(parse_date),
         end: query.end_date.as_deref().and_then(parse_date),
         created_by: clean_string(query.created_by.as_deref()),

@@ -19,7 +19,7 @@ use super::repository::{self, Filter, IncidentRow};
 use super::sse;
 use crate::core::clean::{clean_date, clean_string};
 use crate::core::error::ApiError;
-use crate::core::extract::{AuthedJson, CurrentUser, ValidatedQuery, ValidationErrors};
+use crate::core::extract::{AuthedJson, CurrentUser, Numeric, ValidatedQuery, ValidationErrors};
 use crate::core::ids::generate_prefixed_uuid_v7;
 use crate::core::pagination::{PaginationParams, resolve_pagination};
 use crate::core::response::{ApiResult, created, ok};
@@ -82,8 +82,8 @@ pub async fn list(
     // The query is paged once when mapped and again by the repository. `limit=0` ("no limit")
     // leaves nothing to carry over, so the second pass applies the default page. Kept as is.
     let first = resolve_pagination(PaginationParams {
-        limit: query.limit(),
-        offset: query.offset(),
+        limit: query.limit.and_then(Numeric::value),
+        offset: query.offset.and_then(Numeric::value),
     });
     let page = resolve_pagination(PaginationParams {
         limit: first.take().map(f64::from),

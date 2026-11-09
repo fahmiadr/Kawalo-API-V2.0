@@ -1,14 +1,12 @@
 //! Request schemas (TypeBox limits) and snake_case response items for the Flutter app.
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::event::ReplyEntity;
 use super::repository::IncidentRow;
 use crate::core::clean::iso_string;
 use crate::core::constants::MAX_PAGE_SIZE;
-use crate::core::extract::{Validate, ValidationErrors};
+use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 const MAX_PHOTOS: usize = 4;
 const MAX_PHOTO_URL_LEN: usize = 2048;
@@ -24,78 +22,22 @@ fn validate_photos(errors: &mut ValidationErrors, photos: Option<&[String]>) {
     errors.each_length("photos", photos, ..=MAX_PHOTO_URL_LEN);
 }
 
-/// Query string of `GET /incidents`. Numbers stay text until [`limit`](Self::limit) so they can be
-/// read like Elysia's `t.Numeric`, and a repeated parameter keeps its last value.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
 pub struct ListQuery {
     pub status: Option<String>,
     pub search: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    limit: Option<String>,
-    offset: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for ListQuery {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let mut params = HashMap::<String, String>::deserialize(deserializer)?;
-        Ok(Self {
-            status: params.remove("status"),
-            search: params.remove("search"),
-            start_date: params.remove("start_date"),
-            end_date: params.remove("end_date"),
-            limit: params.remove("limit"),
-            offset: params.remove("offset"),
-        })
-    }
-}
-
-/// `Number(text)` as `t.Numeric` applies it: surrounding spaces, exponents and `0x`/`0o`/`0b`
-/// prefixes are accepted; blank text, words and non-finite results are not.
-fn numeric(raw: &str) -> Option<f64> {
-    let text = raw.trim();
-    let lower = text.to_ascii_lowercase();
-    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
-        if let Some(digits) = lower.strip_prefix(prefix) {
-            return u64::from_str_radix(digits, radix).ok().map(|n| n as f64);
-        }
-    }
-    let plain = text
-        .bytes()
-        .all(|b| !b.is_ascii_alphabetic() || matches!(b, b'e' | b'E'));
-    if text.is_empty() || !plain {
-        return None;
-    }
-    text.parse::<f64>().ok().filter(|n| n.is_finite())
-}
-
-impl ListQuery {
-    pub fn limit(&self) -> Option<f64> {
-        self.limit.as_deref().and_then(numeric)
-    }
-
-    pub fn offset(&self) -> Option<f64> {
-        self.offset.as_deref().and_then(numeric)
-    }
+    pub limit: Option<Numeric>,
+    pub offset: Option<Numeric>,
 }
 
 impl Validate for ListQuery {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
         errors.opt_length("search", self.search.as_deref(), 1..);
-        for (name, raw, max) in [
-            ("limit", &self.limit, f64::from(MAX_PAGE_SIZE)),
-            ("offset", &self.offset, f64::INFINITY),
-        ] {
-            match raw.as_deref().map(numeric) {
-                None => {}
-                Some(None) => errors.push(
-                    name,
-                    format!("Property '{name}' should be one of: 'numeric', 'number'"),
-                ),
-                Some(Some(n)) => errors.range(name, n, 0.0..=max),
-            }
-        }
+        errors.numeric("limit", self.limit, 0.0..=f64::from(MAX_PAGE_SIZE));
+        errors.numeric("offset", self.offset, 0.0..);
         errors.into_result()
     }
 }

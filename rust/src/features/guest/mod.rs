@@ -17,7 +17,13 @@ pub fn router() -> Router<AppState> {
                 .post(handlers::create)
                 .delete(handlers::delete_batch),
         )
-        .route("/guests/master-types", get(handlers::master_types))
+        .route(
+            "/guests/master-types",
+            get(handlers::master_types)
+                .put(handlers::update)
+                .patch(handlers::update)
+                .delete(handlers::delete_one),
+        )
         .route(
             "/guests/{id}",
             get(handlers::get_by_id)

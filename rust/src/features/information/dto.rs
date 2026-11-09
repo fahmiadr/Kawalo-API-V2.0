@@ -1,12 +1,10 @@
 //! Request and response shapes of `/information`; constraints mirror the TypeBox schemas.
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::core::clean::Patch;
 use crate::core::constants::MAX_PAGE_SIZE;
-use crate::core::extract::{Validate, ValidationErrors};
+use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 const TITLE_MAX: usize = 128;
 const TEXT_MAX: usize = 1024;
@@ -38,62 +36,22 @@ impl FeedType {
     }
 }
 
-/// Read through a map so a repeated parameter keeps its last value, as in Elysia.
-/// `limit` and `offset` are `NaN` when they are not numbers, which [`Validate`] rejects.
 #[derive(Debug, Deserialize)]
-#[serde(from = "HashMap<String, String>")]
 pub struct ListQuery {
     pub search: Option<String>,
-    pub limit: Option<f64>,
-    pub offset: Option<f64>,
+    pub limit: Option<Numeric>,
+    pub offset: Option<Numeric>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub created_by: Option<String>,
-}
-
-impl From<HashMap<String, String>> for ListQuery {
-    fn from(mut params: HashMap<String, String>) -> Self {
-        let mut take = |key: &str| params.remove(key);
-        let search = take("search");
-        let limit = take("limit").map(|raw| js_number(&raw));
-        let offset = take("offset").map(|raw| js_number(&raw));
-        let start_date = take("start_date");
-        let end_date = take("end_date");
-        let created_by = take("created_by");
-        Self {
-            search,
-            limit,
-            offset,
-            start_date,
-            end_date,
-            created_by,
-        }
-    }
-}
-
-/// `t.Numeric`: JavaScript `Number(text)` for decimal, exponent and `0x`/`0o`/`0b` text; blank or
-/// malformed text is `NaN`.
-fn js_number(raw: &str) -> f64 {
-    let text = raw.trim();
-    let radix = match text.get(..2) {
-        Some("0x" | "0X") => Some(16),
-        Some("0o" | "0O") => Some(8),
-        Some("0b" | "0B") => Some(2),
-        _ => None,
-    };
-    match radix {
-        // Precision loss above 2^53 matches JavaScript.
-        Some(radix) => u64::from_str_radix(&text[2..], radix).map_or(f64::NAN, |n| n as f64),
-        None => text.parse::<f64>().unwrap_or(f64::NAN),
-    }
 }
 
 impl Validate for ListQuery {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
         errors.opt_length("search", self.search.as_deref(), 1..);
-        errors.opt_range("limit", self.limit, 0.0..=f64::from(MAX_PAGE_SIZE));
-        errors.opt_range("offset", self.offset, 0.0..);
+        errors.numeric("limit", self.limit, 0.0..=f64::from(MAX_PAGE_SIZE));
+        errors.numeric("offset", self.offset, 0.0..);
         errors.opt_length("created_by", self.created_by.as_deref(), 1..);
         errors.into_result()
     }
@@ -247,35 +205,4 @@ pub struct InformationItem {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct DeleteBatchResult {
     pub deleted_count: u64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn numeric_query_text_follows_javascript_number() {
-        for (text, expected) in [
-            ("5", 5.0),
-            ("2.5", 2.5),
-            ("1e1", 10.0),
-            ("0x5", 5.0),
-            ("0b11", 3.0),
-            ("0o17", 15.0),
-            (" 2 ", 2.0),
-            ("-1", -1.0),
-        ] {
-            assert_eq!(js_number(text), expected, "{text:?}");
-        }
-        for text in ["", "  ", "abc", "0x", "12abc"] {
-            assert!(js_number(text).is_nan(), "{text:?}");
-        }
-    }
-
-    #[test]
-    fn repeated_query_parameters_keep_the_last_value() {
-        let params = serde_urlencoded::from_str::<HashMap<String, String>>("limit=1&limit=3&q=x")
-            .expect("map");
-        assert_eq!(ListQuery::from(params).limit, Some(3.0));
-    }
 }

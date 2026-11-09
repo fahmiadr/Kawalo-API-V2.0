@@ -11,7 +11,7 @@ use crate::core::clean::{
 };
 use crate::core::error::ApiError;
 use crate::core::extract::{
-    AuthContext, AuthedJson, CurrentUser, ValidatedQuery, ValidationErrors,
+    AuthContext, AuthedJson, CurrentUser, Numeric, ValidatedQuery, ValidationErrors,
 };
 use crate::core::ids::generate_prefixed_uuid_v7;
 use crate::core::pagination::{PaginationParams, resolve_pagination};
@@ -89,8 +89,8 @@ pub async fn list(
         return ok(Vec::new(), MESSAGE);
     };
     let page = resolve_pagination(PaginationParams {
-        limit: query.limit,
-        offset: query.offset,
+        limit: query.limit.and_then(Numeric::value),
+        offset: query.offset.and_then(Numeric::value),
     });
     let filter = ListFilter {
         search: clean_string(query.search.as_deref()),

@@ -1,5 +1,7 @@
 //! `ValidatedQuery<T>`: query string with the Elysia error behaviour.
 
+use std::collections::HashMap;
+
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
@@ -7,12 +9,13 @@ use serde::de::DeserializeOwned;
 use crate::core::error::ApiError;
 use crate::core::extract::validate::{Validate, describe_path_error};
 
-/// Deserialises and validates the query string. Unknown parameters are ignored.
+/// Deserialises and validates the query string. Unknown parameters are ignored and a repeated
+/// parameter keeps its last value, as in Elysia.
 ///
-/// Numbers arrive as text and are parsed like Elysia's `t.Numeric`: declare them as
-/// `Option<f64>` and bound them with [`ValidationErrors::range`](super::ValidationErrors::range).
-/// Failures are 422 `VALIDATION_ERROR`. Elysia validates before auth, so put this extractor
-/// before [`CurrentUser`](super::CurrentUser) in the handler arguments to keep that order.
+/// Declare numbers as `Option<`[`Numeric`](super::Numeric)`>` and bound them with
+/// [`ValidationErrors::numeric`](super::ValidationErrors::numeric). Failures are 422
+/// `VALIDATION_ERROR`. Elysia validates before auth, so put this extractor before
+/// [`CurrentUser`](super::CurrentUser) in the handler arguments to keep that order.
 ///
 /// ```ignore
 /// async fn list(ValidatedQuery(q): ValidatedQuery<ListQuery>, user: CurrentUser) -> ApiResult<Out> { .. }
@@ -29,8 +32,13 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let query = parts.uri.query().unwrap_or("");
-        let pairs = form_urlencoded::parse(query.as_bytes());
-        let deserializer = serde_urlencoded::Deserializer::new(pairs);
+        // serde_urlencoded rejects a repeated field, so collapse to the last occurrence first.
+        let last: HashMap<_, _> = form_urlencoded::parse(query.as_bytes()).collect();
+        let canonical = form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(&last)
+            .finish();
+        let deserializer =
+            serde_urlencoded::Deserializer::new(form_urlencoded::parse(canonical.as_bytes()));
         let value: T = serde_path_to_error::deserialize(deserializer)
             .map_err(|err| ApiError::invalid_input(describe_path_error(&err)))?;
         value
@@ -43,23 +51,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::extract::ValidationErrors;
+    use crate::core::extract::{Numeric, ValidationErrors};
     use axum::http::Request;
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
     struct Q {
         search: Option<String>,
-        limit: Option<f64>,
-        offset: Option<f64>,
+        limit: Option<Numeric>,
+        offset: Option<Numeric>,
     }
 
     impl Validate for Q {
         fn validate(&self) -> Result<(), ValidationErrors> {
             let mut errors = ValidationErrors::new();
             errors.opt_length("search", self.search.as_deref(), 1..);
-            errors.opt_range("limit", self.limit, 0.0..=100.0);
-            errors.opt_range("offset", self.offset, 0.0..);
+            errors.numeric("limit", self.limit, 0.0..=100.0);
+            errors.numeric("offset", self.offset, 0.0..);
             errors.into_result()
         }
     }
@@ -75,6 +83,10 @@ mod tests {
             .map(|q| q.0)
     }
 
+    fn details(err: &ApiError) -> &str {
+        err.details().and_then(|d| d.as_str()).expect("details")
+    }
+
     #[tokio::test]
     async fn parses_numbers_and_ignores_unknown_parameters() {
         let q = extract("/x?limit=5&offset=1.5&search=abc&zzz=1")
@@ -82,33 +94,67 @@ mod tests {
             .expect("ok");
         assert_eq!(
             (q.limit, q.offset, q.search.as_deref()),
-            (Some(5.0), Some(1.5), Some("abc"))
+            (
+                Some(Numeric::Value(5.0)),
+                Some(Numeric::Value(1.5)),
+                Some("abc")
+            )
         );
         assert!(extract("/x").await.is_ok());
     }
 
     #[tokio::test]
-    async fn bad_values_are_422_with_a_field_path() {
-        for (uri, detail) in [
-            ("/x?limit=abc", "/limit:"),
-            ("/x?limit=", "/limit:"),
+    async fn a_repeated_parameter_keeps_its_last_value() {
+        let q = extract("/x?limit=abc&limit=7&se%61rch=a&search=b")
+            .await
+            .expect("ok");
+        assert_eq!(
+            (q.limit, q.search.as_deref()),
+            (Some(Numeric::Value(7.0)), Some("b"))
+        );
+        assert!(extract("/x?limit=7&limit=abc").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn errors_follow_the_two_elysia_stages() {
+        const BAD: &str = "Property 'limit' should be one of: 'numeric', 'number'";
+        for (uri, want) in [
+            ("/x?limit=abc", format!("/limit: {BAD}")),
+            ("/x?limit=", format!("/limit: {BAD}")),
+            (
+                "/x?limit=abc&offset=abc",
+                format!("/limit: {BAD}, /offset: {}", BAD.replace("limit", "offset")),
+            ),
+            (
+                "/x?search=&limit=abc",
+                format!("/search: Expected string length greater or equal to 1, /limit: {BAD}"),
+            ),
+            // Range errors come second, alone and without a path.
             (
                 "/x?limit=200",
-                "/limit: Expected number to be less or equal to 100",
+                ": Expected number to be less or equal to 100".into(),
             ),
             (
-                "/x?offset=-1",
-                "/offset: Expected number to be greater or equal to 0",
+                "/x?offset=-1&limit=200",
+                ": Expected number to be less or equal to 100".into(),
             ),
             (
-                "/x?search=",
-                "/search: Expected string length greater or equal to 1",
+                "/x?limit=-1&offset=-1",
+                ": Expected number to be greater or equal to 0".into(),
+            ),
+            ("/x?limit=Infinity", ": Expected number".into()),
+            (
+                "/x?search=&limit=200",
+                "/search: Expected string length greater or equal to 1".into(),
+            ),
+            (
+                "/x?limit=200&offset=abc",
+                format!("/offset: {}", BAD.replace("limit", "offset")),
             ),
         ] {
             let err = extract(uri).await.expect_err(uri);
             assert_eq!(err.status().as_u16(), 422, "{uri}");
-            let details = err.details().and_then(|d| d.as_str()).expect("details");
-            assert!(details.starts_with(detail), "{uri}: {details}");
+            assert_eq!(details(&err), want, "{uri}");
         }
     }
 }

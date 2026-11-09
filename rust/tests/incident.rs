@@ -209,7 +209,7 @@ mod auth_and_validation {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             body["details"],
-            "/limit: Expected number to be less or equal to 100"
+            ": Expected number to be less or equal to 100"
         );
     }
 
