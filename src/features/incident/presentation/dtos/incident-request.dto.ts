@@ -30,7 +30,7 @@ export type GetIncidentsQueryDtoType = Static<typeof GetIncidentsQueryDto>;
 
 export const CreateIncidentDto = t.Object({
   title: t.String({ minLength: 1, maxLength: 128 }),
-  // group_id dikirim app tetapi diabaikan: grup selalu diambil dari token (isolasi tenant).
+  // The app sends group_id but it is ignored: the group always comes from the token (tenant isolation).
   group_id: t.Optional(t.String()),
   description: t.Optional(t.Nullable(t.String({ maxLength: 1024 }))),
   category: t.Optional(t.Nullable(t.String({ maxLength: 16 }))),

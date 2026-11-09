@@ -42,12 +42,11 @@ export interface IncidentRepository {
   listReplies(incidentId: string): Promise<IncidentReplyEntity[]>;
   create(data: NewIncident): Promise<IncidentEntity>;
   addReply(data: NewIncidentReply): Promise<IncidentReplyEntity>;
-  /** Hanya mengubah insiden berstatus OPEN. Mengembalikan state terbaru. */
+  /** Only changes an OPEN incident. Returns the latest state either way. */
   resolve(id: string, by: { email: string; name: string }): Promise<IncidentEntity | null>;
   softDelete(id: string): Promise<Date>;
 }
 
-/** Event realtime thread insiden (diteruskan ke klien lewat SSE). */
 export type IncidentEvent =
   | { type: 'new_reply'; reply: IncidentReplyEntity }
   | {

@@ -7,29 +7,29 @@ import {
 } from '@features/ptt/infrastructure/ptt-room-registry';
 import type Redis from 'ioredis';
 
-/** Subset ioredis yang dipakai relay (memudahkan fake di unit test). */
+/** The subset of ioredis the relay uses (keeps it easy to fake in unit tests). */
 export type PttPubSubClient = Pick<Redis, 'publish' | 'subscribe' | 'unsubscribe' | 'on'>;
 
-const ORIGIN_LEN = 16; // panjang instanceId (hex ASCII) di awal frame audio
+const ORIGIN_LEN = 16; // length of the instanceId (hex ASCII) prefixed to each audio frame
 
 type ControlMessage =
   | { o: string; t: 'json'; payload: string; exclude?: string }
   | { o: string; t: 'preempted'; previousUserId: string; frame: unknown };
 
 /**
- * Relay antar-instance untuk PTT lewat Redis pub/sub.
+ * Cross-instance relay for PTT over Redis pub/sub.
  *
- * Registry soket hanya hidup di memori satu proses, jadi tanpa relay anggota squad yang
- * tersambung ke instance lain tidak menerima audio/frame kontrol. Pola:
- * - Fan-out lokal tetap langsung (latensi nol); relay hanya meneruskan ke instance LAIN.
- * - Tiap pesan diberi `instanceId` pengirim; penerima membuang pesan miliknya sendiri.
- * - Dua channel per grup: `ctl` (JSON: frame kontrol, sinyal preempt) dan `audio` (biner Opus).
- * - Subscribe hanya selama ada soket lokal di grup tersebut (join/leave).
+ * The socket registry lives in one process's memory, so without a relay squad members connected
+ * to another instance would receive neither audio nor control frames. Design:
+ * - Local fan-out stays direct (zero latency); the relay only forwards to OTHER instances.
+ * - Every message carries the sender's `instanceId`; receivers drop their own messages.
+ * - Two channels per group: `ctl` (JSON: control frames, preempt signal) and `audio` (binary Opus).
+ * - A group is subscribed only while at least one local socket is in it (join/leave).
  *
- * ponytail: audio dipublish selalu (~50 msg/s per pembicara aktif) walau tak ada instance lain.
- * Bila Redis jadi bottleneck, cache `PUBSUB NUMSUB` per grup dan lewati publish saat tak ada peer.
- * Lease lantai di Redis (TTL 5 dtk) menutup kasus instance mati; listener di instance lain baru
- * kembali IDLE saat ada FLOOR_STATE_CHANGED berikutnya.
+ * ponytail: audio is always published (~50 msg/s per active speaker) even with no other instance.
+ * If Redis becomes the bottleneck, cache `PUBSUB NUMSUB` per group and skip publishing without peers.
+ * The floor lease in Redis (5s TTL) covers a crashed instance; listeners on other instances only
+ * return to IDLE on the next FLOOR_STATE_CHANGED.
  */
 export class PttClusterRelay {
   public readonly instanceId = randomBytes(ORIGIN_LEN / 2).toString('hex');
@@ -61,7 +61,7 @@ export class PttClusterRelay {
       .catch(() => undefined);
   }
 
-  /** Teruskan frame JSON ke instance lain (fan-out lokal dilakukan pemanggil). */
+  /** Forwards a JSON frame to other instances (the caller does the local fan-out). */
   public publishJson(groupUid: string, payload: unknown, excludeSocketId?: string): void {
     this.sendCtl(groupUid, {
       o: this.instanceId,
@@ -71,7 +71,7 @@ export class PttClusterRelay {
     });
   }
 
-  /** Beri tahu instance lain bahwa pembicara sebelumnya dipreempt (agar audionya dihentikan di sana). */
+  /** Tells other instances the previous speaker was preempted so they stop relaying that audio. */
   public publishPreempted(groupUid: string, previousUserId: string, frame: unknown): void {
     this.sendCtl(groupUid, { o: this.instanceId, t: 'preempted', previousUserId, frame });
   }
@@ -124,7 +124,7 @@ export class PttClusterRelay {
       return;
     }
 
-    // preempted: hanya instance yang memegang soket pembicara sebelumnya yang bertindak
+    // preempted: only the instance holding the previous speaker's socket acts
     const active = this.registry.getActiveSpeaker(groupUid);
     if (active?.userId !== data.previousUserId) return;
     this.registry.clearTotTimer(groupUid);
@@ -132,7 +132,7 @@ export class PttClusterRelay {
     try {
       this.registry.getClient(groupUid, active.socketId)?.ws.send(JSON.stringify(data.frame));
     } catch {
-      // soket sudah tertutup
+      // socket already closed
     }
   }
 }

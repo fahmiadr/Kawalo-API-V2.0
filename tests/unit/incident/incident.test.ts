@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 const user = { email: 'a@x.id', name: 'Andi', role: 'GUARD', group_uid: 'g1', allow_admin: false };
 
-/** Repository in-memory: cukup untuk menguji aturan bisnis tanpa DB. */
+/** In-memory repository: enough to test the business rules without a database. */
 function makeRepo() {
   const incidents = new Map<string, IncidentEntity>();
   const replies: IncidentReplyEntity[] = [];
@@ -287,7 +287,7 @@ describe('createIncidentSseStream', () => {
       signal: ac.signal,
     });
     const reader = stream.getReader();
-    await reader.read(); // retry
+    await reader.read();
     ac.abort();
     expect((await reader.read()).done).toBe(true);
     expect(s.unsubscribed()).toBe(1);

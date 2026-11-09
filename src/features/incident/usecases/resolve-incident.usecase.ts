@@ -28,7 +28,7 @@ export class ResolveIncidentUseCase implements UseCase<IncidentEntity, ResolveIn
 
     const incident = await this.repository.findById(id, groupUid);
     if (!incident) return Result.fail(new NotFoundFailure('Insiden tidak ditemukan.'));
-    if (incident.status === 'RESOLVED') return Result.ok(incident); // idempoten, tanpa event ganda
+    if (incident.status === 'RESOLVED') return Result.ok(incident); // idempotent: no duplicate event
 
     const resolvedByName = currentUser.name ?? currentUser.email;
     const resolved = await this.repository.resolve(incident.id, {
@@ -37,7 +37,7 @@ export class ResolveIncidentUseCase implements UseCase<IncidentEntity, ResolveIn
     });
     if (!resolved) return Result.fail(new NotFoundFailure('Insiden tidak ditemukan.'));
 
-    // Bila dua orang menyelesaikan bersamaan, hanya pemenang (resolvedBy == kita) yang publish.
+    // When two people resolve concurrently, only the winner (resolvedBy is us) publishes.
     if (resolved.resolvedBy === currentUser.email && resolved.resolvedAt) {
       await safePublish(this.publisher, incident.id, {
         type: 'thread_resolved',
