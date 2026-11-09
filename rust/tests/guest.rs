@@ -1174,3 +1174,55 @@ async fn delete_batch_reports_the_count_and_validates_the_list() {
     );
     assert_eq!(body["message"], "1 data tamu berhasil dihapus");
 }
+
+#[tokio::test]
+async fn numeric_query_values_follow_javascript_number() {
+    let app = TestApp::start().await;
+    let t = Tenant::new(&app).await;
+    for index in 0..22 {
+        t.seed(
+            &app,
+            &format!("g{index:02}"),
+            &t.guard,
+            "2026-02-01 08:00:00",
+        )
+        .await;
+    }
+    let token = t.token(&app, &t.guard).await;
+    let count = |query: &'static str| {
+        let (app, token) = (&app, &token);
+        async move {
+            let (status, body) = app
+                .call("GET", &format!("/api/v1/guests{query}"), Some(token), None)
+                .await;
+            (status, body["data"].as_array().map(Vec::len))
+        }
+    };
+
+    assert_eq!(count("?limit=0x5").await, (StatusCode::OK, Some(5)));
+    assert_eq!(count("?limit=0b11").await, (StatusCode::OK, Some(3)));
+    assert_eq!(count("?limit=1e1").await, (StatusCode::OK, Some(10)));
+    assert_eq!(count("?limit=%202%20").await, (StatusCode::OK, Some(2)));
+    assert_eq!(count("?limit=2.9").await, (StatusCode::OK, Some(2)));
+    assert_eq!(
+        count("?limit=1&limit=4").await,
+        (StatusCode::OK, Some(4)),
+        "last value wins"
+    );
+    assert_eq!(count("?limit=abc&limit=3").await, (StatusCode::OK, Some(3)));
+    // `limit=0` means "no limit", but the TypeScript server then pages with the default again.
+    assert_eq!(count("?limit=0&offset=5").await, (StatusCode::OK, Some(20)));
+    for query in [
+        "?limit=",
+        "?limit=3&limit=abc",
+        "?limit=Infinity",
+        "?limit=1_0",
+        "?offset=-1",
+    ] {
+        assert_eq!(
+            count(query).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{query}"
+        );
+    }
+}

@@ -1,5 +1,7 @@
 //! Request validation (TypeBox DTOs) and response shapes.
 
+use std::collections::HashMap;
+
 use axum::extract::{FromRequestParts, Path};
 use axum::http::request::Parts;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -61,7 +63,10 @@ impl<S: Send + Sync> FromRequestParts<S> for GuestPath {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// Query string of `GET /guests`. Parsed by hand because Elysia's `t.Numeric` and repeated
+/// parameters behave unlike serde: the last occurrence wins, and numbers are read with
+/// JavaScript's `Number()` (`0x5`, `1e1`, `" 2 "`).
+#[derive(Debug)]
 pub struct ListQuery {
     pub search: Option<String>,
     pub limit: Option<f64>,
@@ -70,6 +75,82 @@ pub struct ListQuery {
     pub end_date: Option<String>,
     pub created_by: Option<String>,
     pub is_active: Option<String>,
+}
+
+/// `Number(text)` for non-empty `text`; `None` for `NaN`.
+fn js_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(0.0);
+    }
+    let radix_digits = |prefix: [&str; 2], radix: u32| {
+        let digits = prefix.iter().find_map(|p| text.strip_prefix(p))?;
+        // `from_str_radix` would also take a leading sign, which `Number()` does not.
+        if !digits.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return None;
+        }
+        u64::from_str_radix(digits, radix).ok().map(|n| n as f64)
+    };
+    if let Some(n) = radix_digits(["0x", "0X"], 16)
+        .or_else(|| radix_digits(["0b", "0B"], 2))
+        .or_else(|| radix_digits(["0o", "0O"], 8))
+    {
+        return Some(n);
+    }
+    // Rust also accepts `inf` and `nan`; JavaScript only spells `Infinity`.
+    if text == "Infinity" || text == "+Infinity" {
+        return Some(f64::INFINITY);
+    }
+    if text == "-Infinity" {
+        return Some(f64::NEG_INFINITY);
+    }
+    if text
+        .bytes()
+        .any(|b| b.is_ascii_alphabetic() && !matches!(b, b'e' | b'E'))
+    {
+        return None;
+    }
+    text.parse::<f64>().ok()
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for ListQuery {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let mut last: HashMap<String, String> = HashMap::new();
+        for (key, value) in form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes()) {
+            last.insert(key.into_owned(), value.into_owned());
+        }
+        let mut numeric = |key: &str| -> Result<Option<f64>, ApiError> {
+            let Some(raw) = last.remove(key) else {
+                return Ok(None);
+            };
+            // Elysia rejects the empty string even though `Number("")` is 0.
+            let number = if raw.is_empty() {
+                None
+            } else {
+                js_number(&raw)
+            };
+            number
+                .map(Some)
+                .ok_or_else(|| ApiError::invalid_input(format!("/{key}: Expected union value")))
+        };
+        let limit = numeric("limit")?;
+        let offset = numeric("offset")?;
+        let query = Self {
+            search: last.remove("search"),
+            limit,
+            offset,
+            start_date: last.remove("start_date"),
+            end_date: last.remove("end_date"),
+            created_by: last.remove("created_by"),
+            is_active: last.remove("is_active"),
+        };
+        query
+            .validate()
+            .map_err(|errors| ApiError::invalid_input(errors.to_string()))?;
+        Ok(query)
+    }
 }
 
 impl Validate for ListQuery {
@@ -291,6 +372,32 @@ mod tests {
         );
         let empty = DeleteBatchBody { ids: vec![] };
         assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn js_number_matches_number_of_strings() {
+        for (text, expected) in [
+            ("5", 5.0),
+            (" 2 ", 2.0),
+            ("   ", 0.0),
+            ("0x5", 5.0),
+            ("0XfF", 255.0),
+            ("0b11", 3.0),
+            ("0o17", 15.0),
+            ("1e1", 10.0),
+            (".5", 0.5),
+            ("5.", 5.0),
+            ("+5", 5.0),
+            ("-0", 0.0),
+        ] {
+            assert_eq!(js_number(text), Some(expected), "{text:?}");
+        }
+        for text in [
+            "abc", "1_0", "0x", "0x+5", "0b12", "inf", "nan", "1e", "--1",
+        ] {
+            assert_eq!(js_number(text), None, "{text:?}");
+        }
+        assert_eq!(js_number("Infinity"), Some(f64::INFINITY));
     }
 
     #[test]

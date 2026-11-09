@@ -1,8 +1,12 @@
 //! SQL for `tkguest` and its lookups (`tkgroup`, `tkuser`, `tkusergroup`, `tkmasterguesttype`).
 
+use std::collections::{BTreeSet, HashMap};
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
-use sqlx::{FromRow, MySql, MySqlPool, QueryBuilder};
+use sqlx::error::BoxDynError;
+use sqlx::mysql::{MySqlTypeInfo, MySqlValueRef};
+use sqlx::{Decode, FromRow, MySql, MySqlPool, QueryBuilder, Type};
 
 use crate::core::clean::{Patch, clean_integer, clean_naive_datetime, clean_string};
 use crate::core::ids::{generate_prefixed_uuid_v7, generate_uuid_v4};
@@ -10,22 +14,17 @@ use crate::core::pagination::Pagination;
 
 use super::dto::MasterGuestType;
 
-/// Dates are read as text: legacy rows may hold `0000-00-00 00:00:00`, which the binary protocol
-/// cannot decode into a timestamp.
-const GUEST_SELECT: &str = "SELECT CAST(g.GuestId AS CHAR) AS id, gr.GroupName AS group_name, \
-    g.GuestName AS guest_name, g.GuestNumber AS guest_number, g.GuestIdentity AS guest_identity, \
-    g.GuestIdentityType AS guest_identity_type, g.GuestPhoto AS guest_photo, \
-    CAST(g.GuestDT AS CHAR) AS guest_dt, CAST(g.GuestAckDT AS CHAR) AS guest_ack_dt, \
-    CAST(g.GuestOutDT AS CHAR) AS guest_out_dt, g.GuestPurpose AS guest_purpose, \
-    g.GuestDestination AS guest_destination, g.GuestToUserEmail AS guest_to_user_email, \
-    tu.UserName AS guest_to_user_name, g.GuestCreatorEmail AS guest_creator_email, \
-    g.GuestCreatorName AS guest_creator_name, g.GuestCategory AS guest_category, \
-    g.QRUID AS qr_uid, g.GuestAddress AS guest_address, g.GuestType AS guest_type, \
-    g.GuestCheckOutByEmail AS guest_checkout_by_email, cu.UserName AS guest_checkout_by_name \
-    FROM tkguest g \
-    LEFT JOIN tkgroup gr ON gr.GroupUID = g.GuestGroupUID \
-    LEFT JOIN tkuser tu ON tu.UserEmail = g.GuestToUserEmail \
-    LEFT JOIN tkuser cu ON cu.UserEmail = g.GuestCheckOutByEmail";
+/// The exact statement Prisma issued, column order included. MariaDB's `filesort` orders rows
+/// that share a `GuestDT` second according to the sort-row layout, so any change to this list
+/// (an alias, a `CAST`, a subquery) can reorder ties relative to the TypeScript server.
+const GUEST_SELECT: &str = "SELECT `tkguest`.`GuestId`, `tkguest`.`GuestUID`, \
+    `tkguest`.`GuestGroupUID`, `tkguest`.`GuestName`, `tkguest`.`GuestNumber`, \
+    `tkguest`.`GuestIdentity`, `tkguest`.`GuestIdentityType`, `tkguest`.`GuestPhoto`, \
+    `tkguest`.`GuestDT`, `tkguest`.`GuestAckDT`, `tkguest`.`GuestOutDT`, \
+    `tkguest`.`GuestPurpose`, `tkguest`.`GuestDestination`, `tkguest`.`GuestToUserEmail`, \
+    `tkguest`.`GuestCreatorEmail`, `tkguest`.`GuestCreatorName`, `tkguest`.`GuestCategory`, \
+    `tkguest`.`QRUID`, `tkguest`.`GuestAddress`, `tkguest`.`GuestType`, \
+    `tkguest`.`GuestCheckOutByEmail` FROM `tkguest`";
 
 const SEARCH_COLUMNS: [&str; 14] = [
     "GuestName",
@@ -44,8 +43,86 @@ const SEARCH_COLUMNS: [&str; 14] = [
     "QRUID",
 ];
 
-/// A guest as returned by the API. Field names double as SQL aliases and JSON keys.
-#[derive(Debug, Clone, FromRow, Serialize)]
+/// A `TIMESTAMP` that tolerates the legacy zero date `0000-00-00 00:00:00`, which sqlx's own
+/// chrono decoding rejects. Zero decodes to `None`.
+#[derive(Debug, Clone, Copy)]
+struct LegacyTimestamp(Option<NaiveDateTime>);
+
+impl Type<MySql> for LegacyTimestamp {
+    fn type_info() -> MySqlTypeInfo {
+        <NaiveDateTime as Type<MySql>>::type_info()
+    }
+
+    fn compatible(ty: &MySqlTypeInfo) -> bool {
+        <DateTime<Utc> as Type<MySql>>::compatible(ty)
+    }
+}
+
+impl<'r> Decode<'r, MySql> for LegacyTimestamp {
+    fn decode(value: MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+        // Binary rows encode a zero date as a bare length prefix of 0, text rows as zeros.
+        let raw = <&[u8] as Decode<MySql>>::decode(value.clone())?;
+        if raw == [0] || raw.starts_with(b"0000-00-00") {
+            return Ok(Self(None));
+        }
+        NaiveDateTime::decode(value).map(|date| Self(Some(date)))
+    }
+}
+
+impl LegacyTimestamp {
+    /// ISO 8601, `None` for zero and epoch dates.
+    fn iso(self) -> Option<String> {
+        self.0.and_then(clean_naive_datetime)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct GuestRow {
+    #[sqlx(rename = "GuestId")]
+    id: i32,
+    #[sqlx(rename = "GuestGroupUID")]
+    group_uid: Option<String>,
+    #[sqlx(rename = "GuestName")]
+    name: Option<String>,
+    #[sqlx(rename = "GuestNumber")]
+    number: Option<String>,
+    #[sqlx(rename = "GuestIdentity")]
+    identity: Option<String>,
+    #[sqlx(rename = "GuestIdentityType")]
+    identity_type: Option<String>,
+    #[sqlx(rename = "GuestPhoto")]
+    photo: Option<String>,
+    #[sqlx(rename = "GuestDT")]
+    arrived_at: Option<LegacyTimestamp>,
+    #[sqlx(rename = "GuestAckDT")]
+    acknowledged_at: Option<LegacyTimestamp>,
+    #[sqlx(rename = "GuestOutDT")]
+    left_at: Option<LegacyTimestamp>,
+    #[sqlx(rename = "GuestPurpose")]
+    purpose: Option<String>,
+    #[sqlx(rename = "GuestDestination")]
+    destination: Option<String>,
+    #[sqlx(rename = "GuestToUserEmail")]
+    to_user_email: Option<String>,
+    #[sqlx(rename = "GuestCreatorEmail")]
+    creator_email: Option<String>,
+    #[sqlx(rename = "GuestCreatorName")]
+    creator_name: Option<String>,
+    #[sqlx(rename = "GuestCategory")]
+    category: Option<String>,
+    #[sqlx(rename = "QRUID")]
+    qr_uid: Option<String>,
+    #[sqlx(rename = "GuestAddress")]
+    address: Option<String>,
+    #[sqlx(rename = "GuestType")]
+    guest_type: Option<String>,
+    #[sqlx(rename = "GuestCheckOutByEmail")]
+    checkout_by_email: Option<String>,
+}
+
+/// A guest as returned by the API, after the legacy-data sanitising of the anti-corruption
+/// layer: dirty markers are `null`, emails lower-case, zero and epoch dates dropped.
+#[derive(Debug, Clone, Serialize)]
 pub struct GuestItem {
     pub id: String,
     pub group_name: Option<String>,
@@ -71,54 +148,8 @@ pub struct GuestItem {
     pub guest_checkout_by_name: Option<String>,
 }
 
-fn tidy(field: &mut Option<String>) {
-    *field = clean_string(field.as_deref());
-}
-
-fn tidy_timestamp(field: &mut Option<String>) {
-    *field = field
-        .as_deref()
-        .and_then(|text| NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S").ok())
-        .and_then(clean_naive_datetime);
-}
-
 impl GuestItem {
-    /// Applies the legacy-data sanitising of the anti-corruption layer: dirty markers become
-    /// `null`, emails are lower-cased, zero and epoch dates are dropped.
-    fn sanitised(mut self) -> Self {
-        for field in [
-            &mut self.group_name,
-            &mut self.guest_name,
-            &mut self.guest_number,
-            &mut self.guest_identity,
-            &mut self.guest_identity_type,
-            &mut self.guest_photo,
-            &mut self.guest_purpose,
-            &mut self.guest_destination,
-            &mut self.guest_to_user_email,
-            &mut self.guest_to_user_name,
-            &mut self.guest_creator_email,
-            &mut self.guest_creator_name,
-            &mut self.guest_category,
-            &mut self.qr_uid,
-            &mut self.guest_address,
-            &mut self.guest_type,
-            &mut self.guest_checkout_by_email,
-            &mut self.guest_checkout_by_name,
-        ] {
-            tidy(field);
-        }
-        for field in [
-            &mut self.guest_dt,
-            &mut self.guest_ack_dt,
-            &mut self.guest_out_dt,
-        ] {
-            tidy_timestamp(field);
-        }
-        self
-    }
-
-    /// Numeric `GuestId`; the column is an auto-increment integer rendered as text.
+    /// Numeric `GuestId`; kept as text for the JSON contract.
     pub fn row_id(&self) -> i64 {
         self.id.parse().unwrap_or_default()
     }
@@ -135,18 +166,114 @@ pub struct GuestFilter {
     pub is_active: Option<bool>,
 }
 
+/// `key -> name` for a lookup table, keyed and valued by their cleaned text.
+async fn names(
+    pool: &MySqlPool,
+    sql: &'static str,
+    keys: &BTreeSet<String>,
+) -> Result<HashMap<String, Option<String>>, sqlx::Error> {
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut query = QueryBuilder::<MySql>::new(sql);
+    let mut list = query.separated(", ");
+    for key in keys {
+        list.push_bind(key);
+    }
+    query.push(")");
+    let rows: Vec<(String, String)> = query.build_query_as().fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(key, name)| Some((clean_string(Some(&key))?, clean_string(Some(&name)))))
+        .collect())
+}
+
+/// Resolves group and user names for `rows` with one query each, run concurrently.
+async fn hydrate(pool: &MySqlPool, rows: Vec<GuestRow>) -> Result<Vec<GuestItem>, sqlx::Error> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let groups: BTreeSet<String> = rows
+        .iter()
+        .filter_map(|row| clean_string(row.group_uid.as_deref()))
+        .collect();
+    let emails: BTreeSet<String> = rows
+        .iter()
+        .flat_map(|row| {
+            [
+                row.to_user_email.as_deref(),
+                row.checkout_by_email.as_deref(),
+            ]
+        })
+        .filter_map(clean_string)
+        .collect();
+    let (group_names, user_names) = tokio::try_join!(
+        names(
+            pool,
+            "SELECT GroupUID, GroupName FROM tkgroup WHERE GroupUID IN (",
+            &groups
+        ),
+        names(
+            pool,
+            "SELECT UserEmail, UserName FROM tkuser WHERE UserEmail IN (",
+            &emails
+        ),
+    )?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let group_uid = clean_string(row.group_uid.as_deref());
+            let to_user_email = clean_string(row.to_user_email.as_deref());
+            let checkout_by_email = clean_string(row.checkout_by_email.as_deref());
+            let lookup = |names: &HashMap<String, Option<String>>, key: &Option<String>| {
+                key.as_ref()
+                    .and_then(|key| names.get(key))
+                    .cloned()
+                    .flatten()
+            };
+            GuestItem {
+                id: row.id.to_string(),
+                group_name: lookup(&group_names, &group_uid),
+                guest_name: clean_string(row.name.as_deref()),
+                guest_number: clean_string(row.number.as_deref()),
+                guest_identity: clean_string(row.identity.as_deref()),
+                guest_identity_type: clean_string(row.identity_type.as_deref()),
+                guest_photo: clean_string(row.photo.as_deref()),
+                guest_dt: row.arrived_at.and_then(LegacyTimestamp::iso),
+                guest_ack_dt: row.acknowledged_at.and_then(LegacyTimestamp::iso),
+                guest_out_dt: row.left_at.and_then(LegacyTimestamp::iso),
+                guest_purpose: clean_string(row.purpose.as_deref()),
+                guest_destination: clean_string(row.destination.as_deref()),
+                guest_to_user_name: lookup(&user_names, &to_user_email),
+                guest_to_user_email: to_user_email,
+                guest_creator_email: clean_string(row.creator_email.as_deref()),
+                guest_creator_name: clean_string(row.creator_name.as_deref()),
+                guest_category: clean_string(row.category.as_deref()),
+                qr_uid: clean_string(row.qr_uid.as_deref()),
+                guest_address: clean_string(row.address.as_deref()),
+                guest_type: clean_string(row.guest_type.as_deref()),
+                guest_checkout_by_name: lookup(&user_names, &checkout_by_email),
+                guest_checkout_by_email: checkout_by_email,
+            }
+        })
+        .collect())
+}
+
 pub async fn list(
     pool: &MySqlPool,
     group_uid: &str,
     filter: &GuestFilter,
 ) -> Result<Vec<GuestItem>, sqlx::Error> {
     let mut query = QueryBuilder::<MySql>::new(GUEST_SELECT);
-    query.push(" WHERE g.GuestGroupUID = ").push_bind(group_uid);
+    query
+        .push(" WHERE `tkguest`.`GuestGroupUID` = ")
+        .push_bind(group_uid);
     if let Some(start) = filter.start {
-        query.push(" AND g.GuestDT >= ").push_bind(start);
+        query.push(" AND `tkguest`.`GuestDT` >= ").push_bind(start);
     }
     if let Some(end) = filter.end {
-        query.push(" AND g.GuestDT <= ").push_bind(end);
+        query.push(" AND `tkguest`.`GuestDT` <= ").push_bind(end);
     }
     let pattern = filter.search.as_ref().map(|search| format!("%{search}%"));
     if let Some(pattern) = &pattern {
@@ -156,9 +283,9 @@ pub async fn list(
                 query.push(" OR ");
             }
             query
-                .push("g.")
+                .push("`tkguest`.`")
                 .push(column)
-                .push(" LIKE ")
+                .push("` LIKE ")
                 .push_bind(pattern);
         }
         // Also match guests whose host or checkout officer has a matching name, limited to
@@ -171,29 +298,30 @@ pub async fn list(
             .push_bind(group_uid)
             .push(" AND ug.Status = 'JOINED' AND u.UserName LIKE ")
             .push_bind(pattern)
-            .push(" AND u.UserEmail IN (g.GuestToUserEmail, g.GuestCheckOutByEmail)))");
+            .push(
+                " AND u.UserEmail IN (`tkguest`.`GuestToUserEmail`, \
+                 `tkguest`.`GuestCheckOutByEmail`)))",
+            );
     }
     if let Some(created_by) = &filter.created_by {
         query
-            .push(" AND g.GuestCreatorEmail = ")
+            .push(" AND `tkguest`.`GuestCreatorEmail` = ")
             .push_bind(created_by);
     }
     if let Some(active) = filter.is_active {
         query.push(if active {
-            " AND g.GuestOutDT IS NULL"
+            " AND `tkguest`.`GuestOutDT` IS NULL"
         } else {
-            " AND g.GuestOutDT IS NOT NULL"
+            " AND `tkguest`.`GuestOutDT` IS NOT NULL"
         });
     }
-    // No tie-breaker on purpose: rows within the same second must come back in the order the
-    // TypeScript query produced.
-    query.push(" ORDER BY g.GuestDT DESC");
+    query.push(" ORDER BY `tkguest`.`GuestDT` DESC");
     if let Pagination::Page { take, skip } = filter.page {
         query.push(" LIMIT ").push_bind(take);
         query.push(" OFFSET ").push_bind(skip);
     }
-    let rows = query.build_query_as::<GuestItem>().fetch_all(pool).await?;
-    Ok(rows.into_iter().map(GuestItem::sanitised).collect())
+    let rows = query.build_query_as::<GuestRow>().fetch_all(pool).await?;
+    hydrate(pool, rows).await
 }
 
 /// Guest of `group_uid` whose `QRUID` equals `identifier`, or whose numeric id does.
@@ -204,29 +332,39 @@ pub async fn find(
 ) -> Result<Option<GuestItem>, sqlx::Error> {
     let mut query = QueryBuilder::<MySql>::new(GUEST_SELECT);
     query
-        .push(" WHERE g.GuestGroupUID = ")
+        .push(" WHERE `tkguest`.`GuestGroupUID` = ")
         .push_bind(group_uid)
-        .push(" AND (g.QRUID = ")
+        .push(" AND (`tkguest`.`QRUID` = ")
         .push_bind(identifier);
     if let Some(id) = clean_integer(Some(identifier)).filter(|&id| id > 0) {
-        query.push(" OR g.GuestId = ").push_bind(id);
+        query.push(" OR `tkguest`.`GuestId` = ").push_bind(id);
     }
     query.push(") LIMIT 1");
     let row = query
-        .build_query_as::<GuestItem>()
+        .build_query_as::<GuestRow>()
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(GuestItem::sanitised))
+    hydrate_one(pool, row).await
 }
 
 pub async fn find_by_row_id(pool: &MySqlPool, id: i64) -> Result<Option<GuestItem>, sqlx::Error> {
     let mut query = QueryBuilder::<MySql>::new(GUEST_SELECT);
-    query.push(" WHERE g.GuestId = ").push_bind(id);
+    query.push(" WHERE `tkguest`.`GuestId` = ").push_bind(id);
     let row = query
-        .build_query_as::<GuestItem>()
+        .build_query_as::<GuestRow>()
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(GuestItem::sanitised))
+    hydrate_one(pool, row).await
+}
+
+async fn hydrate_one(
+    pool: &MySqlPool,
+    row: Option<GuestRow>,
+) -> Result<Option<GuestItem>, sqlx::Error> {
+    Ok(hydrate(pool, row.into_iter().collect())
+        .await?
+        .into_iter()
+        .next())
 }
 
 /// Creator emails of the guests of `group_uid` among `ids`, one entry per existing guest.

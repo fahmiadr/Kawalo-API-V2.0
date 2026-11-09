@@ -7,8 +7,8 @@ use crate::core::clean::{
     Patch, clean_boolean, clean_date, clean_integer, clean_string, clean_update_string,
 };
 use crate::core::error::ApiError;
-use crate::core::extract::{AuthedJson, CurrentUser, ValidatedQuery};
-use crate::core::pagination::{PaginationParams, resolve_pagination};
+use crate::core::extract::{AuthedJson, CurrentUser};
+use crate::core::pagination::{Pagination, PaginationParams, resolve_pagination};
 use crate::core::response::{ApiResult, created, ok};
 use crate::core::state::AppState;
 
@@ -50,6 +50,17 @@ fn parse_date(text: &str) -> Option<DateTime<Utc>> {
         .map(|date| date.with_timezone(&Utc))
 }
 
+/// The TypeScript server resolves paging twice (request mapper, then data source). `limit=0`
+/// yields "no limit" the first time, which the second pass reads as a missing limit: the query
+/// really runs with `LIMIT 20 OFFSET 0`. Kept so responses stay identical.
+fn double_resolved_page(limit: Option<f64>, offset: Option<f64>) -> Pagination {
+    let first = resolve_pagination(PaginationParams { limit, offset });
+    resolve_pagination(PaginationParams {
+        limit: first.take().map(f64::from),
+        offset: first.skip().map(f64::from),
+    })
+}
+
 /// A QR code in the body wins over the path id.
 fn identifier(qr_uid: Option<&str>, path_id: &str) -> Result<String, ApiError> {
     clean_string(qr_uid)
@@ -70,7 +81,7 @@ pub async fn master_types(
 
 pub async fn list(
     State(state): State<AppState>,
-    ValidatedQuery(query): ValidatedQuery<ListQuery>,
+    query: ListQuery,
     user: CurrentUser,
 ) -> ApiResult<Vec<GuestItem>> {
     let Some(group) = group_of(&user) else {
@@ -78,10 +89,7 @@ pub async fn list(
     };
     let filter = GuestFilter {
         search: clean_string(query.search.as_deref()),
-        page: resolve_pagination(PaginationParams {
-            limit: query.limit,
-            offset: query.offset,
-        }),
+        page: double_resolved_page(query.limit, query.offset),
         start: query.start_date.as_deref().and_then(parse_date),
         end: query.end_date.as_deref().and_then(parse_date),
         created_by: clean_string(query.created_by.as_deref()),
