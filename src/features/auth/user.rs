@@ -47,18 +47,20 @@ impl Secret {
     }
 }
 
-/// How a user's password is checked. Once `PasswordHash` is set it is the only source of truth;
-/// the legacy `Password` column is then ignored.
-#[derive(Debug, Clone)]
-pub enum Credential {
-    Hash(Secret),
-    Plaintext(Secret),
-}
-
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Secret(..)")
     }
+}
+
+/// What is stored to check a password against. At least one side is present.
+///
+/// While the legacy plain-text `Password` is filled it stays the source of truth and the hash is
+/// only its shadow; once it is emptied (phase 2) the hash alone decides.
+#[derive(Debug, Clone)]
+pub struct Credential {
+    pub plaintext: Option<Secret>,
+    pub hash: Option<Secret>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,13 +202,14 @@ async fn hydrate(
     ) else {
         return Ok(None);
     };
-    // A user without any credential cannot log in, as before.
-    let Some(credential) = clean_string(row.password_hash.as_deref())
-        .map(|hash| Credential::Hash(Secret(hash)))
-        .or_else(|| clean_string(Some(&row.password)).map(|p| Credential::Plaintext(Secret(p))))
-    else {
-        return Ok(None);
+    let credential = Credential {
+        plaintext: clean_string(Some(&row.password)).map(Secret),
+        hash: clean_string(row.password_hash.as_deref()).map(Secret),
     };
+    // A user without any credential cannot log in, as before.
+    if credential.plaintext.is_none() && credential.hash.is_none() {
+        return Ok(None);
+    }
 
     let memberships = sqlx::query_as::<_, MembershipRow>(
         "SELECT ug.GroupUID, ug.AllowAdmin, ug.AllowPatrol, ug.AllowMonPatrol, ug.Category, \
@@ -253,8 +256,14 @@ mod tests {
         assert!(!secret.matches(""));
         assert_eq!(format!("{secret:?}"), "Secret(..)");
         assert_eq!(
-            format!("{:?}", Credential::Hash(Secret("$argon2id$x".to_owned()))),
-            "Hash(Secret(..))"
+            format!(
+                "{:?}",
+                Credential {
+                    plaintext: None,
+                    hash: Some(Secret("$argon2id$x".to_owned()))
+                }
+            ),
+            "Credential { plaintext: None, hash: Some(Secret(..)) }"
         );
     }
 }

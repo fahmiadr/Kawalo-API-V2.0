@@ -51,6 +51,42 @@ Migrasi baru: tulis SQL di `prisma/migrations/YYYYMMDDHHMMSS_deskripsi/migration
 Opsi (belum dikerjakan): memindahkan migrasi ke `sqlx migrate` akan menghilangkan kebutuhan Node sama sekali, tetapi
 `_prisma_migrations` perlu dipetakan ke `_sqlx_migrations` (checksum berbeda) sehingga butuh langkah baseline di tiap database.
 
+## Password: Argon2id dengan upgrade transparan
+
+`tkuser.Password` (VARCHAR(64)) masih berisi plaintext karena sistem lain mungkin membaca dan **mengubahnya**; API tidak pernah mengubah,
+menimpa, atau mengosongkan kolom itu. Migrasi `20261110000000_add_user_password_hash` menambah kolom `tkuser.PasswordHash`
+(`VARCHAR(255) NULL`, `ADD COLUMN IF NOT EXISTS`, jadi aman diulang) berisi string PHC `$argon2id$v=19$m=19456,t=2,p=1$...`
+(parameter minimum OWASP; string PHC menyimpan parameternya, jadi menaikkan parameter nanti tidak merusak hash lama).
+
+**Selama `Password` terisi, plaintext tetap sumber kebenaran dan hash hanya bayangannya.** `POST /auth/login` (kontrak luar tidak berubah)
+memutuskan begini (`src/features/auth/password_check.rs`):
+
+| Hash cocok | Plaintext `Password` | Hasil |
+| :--- | :--- | :--- |
+| ya | kosong | terima (fase 2: hash saja) |
+| ya | cocok | terima |
+| ya | terisi tetapi beda | **tolak**: hash basi (password sudah diganti di sistem lain) |
+| tidak / `PasswordHash` kosong | cocok | terima, lalu hitung ulang dan simpan hash (`UPDATE ... WHERE UserId = ? AND BINARY Password = <yang dibandingkan>`) |
+| tidak / `PasswordHash` kosong | beda atau kosong | tolak |
+
+Penolakan selalu 401 yang sama dan dihitung oleh pembatas login/penguncian seperti biasa. Kondisi `BINARY Password = ...` mencegah hash basi bila password
+diganti di sela-sela baca dan tulis. Gagal menyimpan hash hanya menulis peringatan di log; login tetap berhasil. Hash yang bukan string PHC valid diperlakukan
+sebagai tidak cocok (dan diganti saat plaintext cocok). Kolom `Password` tidak pernah ditulis.
+
+Biaya: satu verifikasi Argon2id (~19 MiB, puluhan ms CPU) per login selama fase 1, di thread blocking di balik semaphore sebanyak jumlah core
+(pola yang sama dengan penandatanganan RSA). Setiap login gagal juga menghabiskan satu verifikasi, nyata atau dummy (hash tetap dengan parameter saat ini),
+sehingga waktu respons tidak membedakan email tak dikenal dari password salah.
+
+Urutan rilis: (1) terapkan migrasi ke database (`npm run prisma:migrate:deploy`), (2) baru rilis biner baru. Biner baru men-`SELECT PasswordHash`,
+jadi tanpa migrasi login mengembalikan 500. Pembatalan: deploy ulang biner lama; kolom boleh dibiarkan karena biner lama tidak membacanya dan `Password` tidak pernah disentuh.
+
+**Fase 2 (belum dikerjakan):** mengosongkan `Password` (kolom `NOT NULL`, jadi string kosong) agar hanya hash yang tersisa. Hanya aman setelah semua konsumen lain
+`Password` dipastikan tidak memerlukannya **dan** setiap hash segar. Kesegaran tidak bisa diperiksa lewat SQL (hash satu arah dan tidak ada kolom sidik jari),
+jadi jangan mengosongkan berdasarkan hitungan baris. Kandidat pemeriksaan kasar: `SELECT COUNT(*) AS total, COUNT(PasswordHash) AS hashed, SUM(Password <> '' AND PasswordHash IS NULL) AS belum_di_hash FROM tkuser`
+(menangkap akun yang belum pernah login, bukan yang basi). Cara aman: paksa hash segar dengan skrip terpisah yang membaca `Password`, menghitung Argon2id, menulis `PasswordHash`
+dalam satu transaksi dengan `WHERE ... AND BINARY Password = <yang dibaca>`, dan baru sesudahnya (setelah sistem lain berhenti mengubah `Password`) mengosongkan `Password` untuk baris yang hash-nya baru saja diverifikasi.
+Mengosongkan `Password` juga menonaktifkan login dengan password lama yang salah-simpan di sistem lain, jadi lakukan di jendela perawatan.
+
 ## Struktur kode
 
 ```
@@ -177,5 +213,5 @@ RSS ada di `tools/bench/results/` (`ts-vs-rust`, `perf-ts-vs-rust-after`, `perf-
 * Working directory harus berisi `certs/` (biner membaca `./certs` relatif cwd, dan file `.env.*` bila ada). Pemasangan `certs/` di server tidak berubah dari versi TypeScript.
 * **Zona waktu**: set `TZ` sama dengan lingkungan sebelumnya (mis. `Asia/Jakarta`). Fitur `operational` mengelompokkan dan memformat waktu menurut zona proses, sehingga hasilnya berbeda bila `TZ` berbeda.
 * `TRUSTED_PROXY_CIDRS` harus mencakup proxy produksi; bila tidak, `X-Forwarded-For` diabaikan dan rate limit serta log memandang semua klien sebagai satu IP.
-* Jalankan migrasi (`npm run prisma:migrate:deploy`) sebelum merilis versi yang membutuhkannya. Migrasi `tkincident*` harus sudah ada di tiap database, kalau tidak endpoint `/incidents` mengembalikan 500.
+* Jalankan migrasi (`npm run prisma:migrate:deploy`) sebelum merilis versi yang membutuhkannya. Migrasi `tkincident*` harus sudah ada di tiap database, kalau tidak endpoint `/incidents` mengembalikan 500; begitu pula `20261110000000_add_user_password_hash` (kolom `tkuser.PasswordHash`), kalau tidak login mengembalikan 500.
 * Liveness `GET /health`, readiness `GET /health/ready`. Pada `SIGTERM`/`SIGINT` server menutup koneksi dengan tenggang 10 detik.

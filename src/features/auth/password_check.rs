@@ -1,41 +1,64 @@
-//! Password check at login, with transparent upgrade of plain-text passwords to Argon2id.
+//! Password check at login, with a shadow Argon2id hash kept in `tkuser.PasswordHash`.
+//!
+//! While the legacy plain-text `Password` is filled it is the source of truth, because other
+//! systems may still change it; the hash is a copy that is refreshed whenever the plain text
+//! proves it stale. Only when `Password` is emptied (phase 2) does the hash decide alone.
 
 use sqlx::MySqlPool;
 
 use crate::core::security::password::{
     dummy_verify_blocking, hash_password_blocking, verify_password_blocking,
 };
-use crate::features::auth::user::{Credential, Secret, User};
+use crate::features::auth::user::{Secret, User};
 
 /// Whether `password` (already trimmed) is `user`'s password; `None` stands for an unknown e-mail.
 ///
+/// | hash matches | plain text      | outcome                                   |
+/// |--------------|-----------------|-------------------------------------------|
+/// | yes          | empty           | accept (phase 2)                          |
+/// | yes          | matches         | accept                                    |
+/// | yes          | differs         | reject: the hash is stale                 |
+/// | no / absent  | matches         | accept, then (re)store the hash           |
+/// | no / absent  | differs / empty | reject                                    |
+///
 /// Every failure costs one Argon2 verification, real or dummy, so response time does not tell an
-/// unknown account from a wrong password. A plain-text match stores the Argon2id hash in
-/// `PasswordHash`; storing it can fail without failing the login.
+/// unknown account from a wrong password. Storing the hash can fail without failing the login.
 pub async fn verify_login(db: &MySqlPool, user: Option<&User>, password: &str) -> bool {
     let Some(user) = user else {
         dummy_verify_blocking(password.to_owned()).await;
         return false;
     };
-    match &user.credential {
-        Credential::Hash(phc) => {
-            let verified =
-                verify_password_blocking(phc.expose().to_owned(), password.to_owned()).await;
-            match verified {
-                Ok(matched) => return matched,
-                // Fail closed: falling back to `Password` would let an old password back in.
-                Err(err) => {
-                    tracing::warn!(user_id = %user.id, error = %err, "cannot verify password hash")
-                }
+    let credential = &user.credential;
+    let plaintext = credential.plaintext.as_ref();
+    let plaintext_matches = plaintext.map(|stored| stored.matches(password));
+
+    let mut hash_matches = false;
+    let mut verified_a_hash = false;
+    if let Some(hash) = &credential.hash {
+        match verify_password_blocking(hash.expose().to_owned(), password.to_owned()).await {
+            Ok(matched) => {
+                hash_matches = matched;
+                verified_a_hash = true;
+            }
+            Err(err) => {
+                tracing::warn!(user_id = %user.id, error = %err, "cannot verify password hash");
             }
         }
-        Credential::Plaintext(stored) if stored.matches(password) => {
-            store_hash(db, user, stored, password).await;
+    }
+
+    match (hash_matches, plaintext_matches) {
+        (true, None | Some(true)) => return true,
+        (_, Some(true)) => {
+            if let Some(stored) = plaintext {
+                store_hash(db, user, stored, password).await;
+            }
             return true;
         }
-        Credential::Plaintext(_) => {}
+        _ => {}
     }
-    dummy_verify_blocking(password.to_owned()).await;
+    if !verified_a_hash {
+        dummy_verify_blocking(password.to_owned()).await;
+    }
     false
 }
 
@@ -49,15 +72,13 @@ async fn store_hash(db: &MySqlPool, user: &User, stored: &Secret, password: &str
     };
     // Matching the plain text again keeps a password changed elsewhere since it was read from
     // getting a stale hash; BINARY because the column's collation is case-insensitive.
-    let result = sqlx::query(
-        "UPDATE tkuser SET PasswordHash = ? \
-         WHERE UserId = ? AND (PasswordHash IS NULL OR PasswordHash = '') AND BINARY Password = ?",
-    )
-    .bind(&phc)
-    .bind(&user.id)
-    .bind(stored.expose())
-    .execute(db)
-    .await;
+    let result =
+        sqlx::query("UPDATE tkuser SET PasswordHash = ? WHERE UserId = ? AND BINARY Password = ?")
+            .bind(&phc)
+            .bind(&user.id)
+            .bind(stored.expose())
+            .execute(db)
+            .await;
     match result {
         Ok(done) if done.rows_affected() == 0 => {
             tracing::debug!(user_id = %user.id, "password hash not stored: row changed meanwhile");

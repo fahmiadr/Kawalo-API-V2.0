@@ -11,6 +11,7 @@ repeated runs; `KW_NODE_ENV=development` has the differences listed under "Devel
 | `elysia-rate-limit` clones a consumed static `Response`: on a warm process the second 429 can become a 500, and a rate-limited request to an unknown route crashes the process | Always the 429 JSON envelope with `retry-after` and `ratelimit-*` | A crash is not a contract. The harness checks the intended 429 on a fresh process (`run` restarts both servers first). |
 | crossws answers a WebSocket `ping` frame incorrectly | A normal pong | No client depends on the defect. |
 | The 101 upgrade response leaks `content-type: text/plain`, CORS and rate-limit headers | Only what the handshake needs | The harness compares `Upgrade` and the subprotocol echo only. |
+| Login compares the stored plain-text `Password` only, and returns sooner for an unknown e-mail than for a known one | While `Password` is filled it still decides; Argon2id verification against `tkuser.PasswordHash` is an extra check that refreshes the hash when stale (phase 2: empty `Password` makes the hash decide). Every failed login spends one real or dummy Argon2 verification | Response bodies, statuses and throttling are identical, so the harness sees nothing; TS ignores the new column and Rust never writes `Password`. See README, "Password: Argon2id". |
 
 ## Elysia quirks that Rust reproduces (probed against the real server)
 

@@ -1154,7 +1154,7 @@ mod logout {
 
 mod password_hash {
     use super::*;
-    use kawalo_api::core::security::password::{hash_password, verify_password};
+    use kawalo_api::core::security::password::verify_password;
 
     async fn stored_hash(app: &TestApp, user_id: u64) -> Option<String> {
         sqlx::query_scalar("SELECT PasswordHash FROM tkuser WHERE UserId = ?")
@@ -1273,29 +1273,79 @@ mod password_hash {
     }
 
     #[tokio::test]
-    async fn once_hashed_the_hash_decides_and_the_plaintext_column_is_ignored() {
+    async fn a_password_changed_elsewhere_beats_the_stale_hash() {
         let app = TestApp::start().await;
         let client = Client::new(&app);
         let seeded = seed(&app, &[("JOINED", "USER")]).await;
         client.login_ok(&seeded.email, None).await;
+        let stale = stored_hash(&app, seeded.user_id).await.expect("hash");
 
-        // Another system changes the legacy column afterwards.
         set_column(&app, seeded.user_id, "Password", Some("sandi-baru")).await;
-        client.login_ok(&seeded.email, None).await;
-        let changed = client.login(&seeded.email, "sandi-baru", None).await;
-        assert_eq!(changed.0, StatusCode::UNAUTHORIZED, "{}", changed.1);
+        // The old password still matches the hash but no longer the plain text.
+        let old = client.login(&seeded.email, PASSWORD, None).await;
+        assert_error(
+            &old,
+            StatusCode::UNAUTHORIZED,
+            "AUTH_INVALID_CREDENTIALS",
+            WRONG_CREDENTIALS,
+        );
+        assert_eq!(stored_hash(&app, seeded.user_id).await, Some(stale.clone()));
 
-        // The legacy column may even be emptied (phase 2).
-        set_column(&app, seeded.user_id, "Password", Some("")).await;
-        client.login_ok(&seeded.email, None).await;
+        // The new one is accepted and the hash follows it.
+        let (status, body) = client.login(&seeded.email, "sandi-baru", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let fresh = stored_hash(&app, seeded.user_id).await.expect("hash");
+        assert_ne!(fresh, stale);
+        assert!(verify_password(&fresh, "sandi-baru").expect("valid PHC"));
+        assert!(!verify_password(&fresh, PASSWORD).expect("valid PHC"));
+        assert_eq!(stored_password(&app, seeded.user_id).await, "sandi-baru");
+        let again = client.login(&seeded.email, "sandi-baru", None).await;
+        assert_eq!(again.0, StatusCode::OK, "{}", again.1);
+        assert_eq!(stored_hash(&app, seeded.user_id).await, Some(fresh));
     }
 
     #[tokio::test]
-    async fn a_hash_that_is_not_a_valid_phc_string_fails_closed() {
+    async fn a_stale_hash_rejection_counts_towards_the_lockout() {
         let app = TestApp::start().await;
         let client = Client::new(&app);
         let seeded = seed(&app, &[("JOINED", "USER")]).await;
-        set_column(&app, seeded.user_id, "PasswordHash", Some("bukan-hash")).await;
+        client.login_ok(&seeded.email, None).await;
+        set_column(&app, seeded.user_id, "Password", Some("sandi-baru")).await;
+
+        for _ in 0..5 {
+            let old = client.login(&seeded.email, PASSWORD, None).await;
+            assert_eq!(old.0, StatusCode::UNAUTHORIZED, "{}", old.1);
+        }
+        let locked = client.login(&seeded.email, "sandi-baru", None).await;
+        assert_eq!(locked.0, StatusCode::TOO_MANY_REQUESTS, "{}", locked.1);
+        assert_eq!(locked.1["error_code"], "AUTH_ACCOUNT_LOCKED");
+    }
+
+    #[tokio::test]
+    async fn with_the_plaintext_emptied_only_the_hash_decides() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "USER")]).await;
+        client.login_ok(&seeded.email, None).await;
+
+        set_column(&app, seeded.user_id, "Password", Some("")).await;
+        client.login_ok(&seeded.email, None).await;
+        let wrong = client.login(&seeded.email, "salah", None).await;
+        assert_error(
+            &wrong,
+            StatusCode::UNAUTHORIZED,
+            "AUTH_INVALID_CREDENTIALS",
+            WRONG_CREDENTIALS,
+        );
+        assert_eq!(stored_password(&app, seeded.user_id).await, "");
+    }
+
+    #[tokio::test]
+    async fn no_plaintext_and_no_hash_means_no_login() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "USER")]).await;
+        set_column(&app, seeded.user_id, "Password", Some("")).await;
 
         let result = client.login(&seeded.email, PASSWORD, None).await;
         assert_error(
@@ -1304,10 +1354,31 @@ mod password_hash {
             "AUTH_INVALID_CREDENTIALS",
             WRONG_CREDENTIALS,
         );
+        assert_eq!(stored_hash(&app, seeded.user_id).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_hash_that_is_not_a_valid_phc_string_is_replaced_by_the_plaintext_check() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "USER")]).await;
+        set_column(&app, seeded.user_id, "PasswordHash", Some("bukan-hash")).await;
+
+        let wrong = client.login(&seeded.email, "salah", None).await;
+        assert_error(
+            &wrong,
+            StatusCode::UNAUTHORIZED,
+            "AUTH_INVALID_CREDENTIALS",
+            WRONG_CREDENTIALS,
+        );
         assert_eq!(
             stored_hash(&app, seeded.user_id).await.as_deref(),
             Some("bukan-hash")
         );
+
+        client.login_ok(&seeded.email, None).await;
+        let healed = stored_hash(&app, seeded.user_id).await.expect("hash");
+        assert!(verify_password(&healed, PASSWORD).expect("valid PHC"));
     }
 
     #[tokio::test]
@@ -1315,14 +1386,17 @@ mod password_hash {
         let app = TestApp::start().await;
         let client = Client::new(&app);
         let seeded = seed(&app, &[("JOINED", "USER")]).await;
-        let phc = hash_password("sandi-lain").expect("hash");
+        // As an older or newer deployment with cheaper parameters would have written it.
+        let params = argon2::Params::new(8, 1, 1, None).expect("params");
+        let cheap =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let phc = argon2::password_hash::PasswordHasher::hash_password(&cheap, PASSWORD.as_bytes())
+            .expect("hash")
+            .to_string();
         set_column(&app, seeded.user_id, "PasswordHash", Some(&phc)).await;
 
-        let ok = client.login(&seeded.email, "sandi-lain", None).await;
-        assert_eq!(ok.0, StatusCode::OK, "{}", ok.1);
-        // The legacy plaintext is not accepted any more.
-        let old = client.login(&seeded.email, PASSWORD, None).await;
-        assert_eq!(old.0, StatusCode::UNAUTHORIZED, "{}", old.1);
+        client.login_ok(&seeded.email, None).await;
+        assert_eq!(stored_hash(&app, seeded.user_id).await, Some(phc));
     }
 
     #[tokio::test]
