@@ -152,7 +152,7 @@ pada konkurensi 64:
 
 | | TypeScript | Rust |
 |---|---|---|
-| RSS idle | 56,9 MB | 4,9 MB |
+| RSS idle | 57 MB | 5 sampai 11 MB |
 | RSS puncak saat beban | 160 sampai 430 MB | 7 sampai 48 MB |
 | Artefak deploy | sekitar 375 MB (`dist` + `node_modules`) | 8,4 MB (satu biner) |
 | Waktu start sampai `/health` | 425 ms | 23 ms |
