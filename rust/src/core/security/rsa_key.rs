@@ -286,19 +286,20 @@ impl RsaKeyManager {
         let retired_kid = self.active_kid();
         let active_kid = new_kid.map_or_else(generate_key_id, str::to_owned);
 
-        fs::create_dir_all(&archive).map_err(io_err(&archive))?;
+        create_private_dir(&archive)?;
         if public_path.exists() {
             let target = archive.join(format!("{retired_kid}.pub.pem"));
             fs::copy(&public_path, &target).map_err(io_err(&target))?;
         }
         if private_path.exists() {
             let target = archive.join(format!("{retired_kid}.key"));
-            fs::copy(&private_path, &target).map_err(io_err(&target))?;
+            let pem = fs::read(&private_path).map_err(io_err(&private_path))?;
+            write_private_file(&target, &pem)?;
         }
 
         tracing::info!("[RsaKeyManager] rotating key: generating new active key ({active_kid})");
         let (private_pem, public_pem) = generate_pair(self.inner.modulus_bits)?;
-        fs::write(&private_path, &private_pem).map_err(io_err(&private_path))?;
+        write_private_file(&private_path, private_pem.as_bytes())?;
         fs::write(&public_path, &public_pem).map_err(io_err(&public_path))?;
         let kid_path = dir.join("active_kid.txt");
         fs::write(&kid_path, &active_kid).map_err(io_err(&kid_path))?;
@@ -459,7 +460,8 @@ impl Inner {
         let (private_path, public_path) = (dir.join("private.key"), dir.join("public.key"));
         let kid_path = dir.join("active_kid.txt");
 
-        fs::create_dir_all(&archive).map_err(io_err(&archive))?;
+        create_private_dir(&archive)?;
+        tighten_existing_private_keys(&private_path, &archive);
 
         let saved_kid = fs::read_to_string(&kid_path)
             .ok()
@@ -480,7 +482,7 @@ impl Inner {
                 self.modulus_bits
             );
             let (private_pem, public_pem) = generate_pair(self.modulus_bits)?;
-            fs::write(&private_path, private_pem).map_err(io_err(&private_path))?;
+            write_private_file(&private_path, private_pem.as_bytes())?;
             fs::write(&public_path, public_pem).map_err(io_err(&public_path))?;
         }
         if needs_new_pair || saved_kid.is_none() {
@@ -636,6 +638,74 @@ fn now_ms() -> u64 {
             .as_millis(),
     )
     .unwrap_or(u64::MAX)
+}
+
+/// Creates `dir` (and parents) readable only by the owner; existing directories are left as is.
+fn create_private_dir(dir: &Path) -> Result<(), KeyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(io_err(dir))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(dir).map_err(io_err(dir))
+    }
+}
+
+/// Writes private key material owner-only. `mode` on `OpenOptions` applies only when the file is
+/// created, so permissions are set again to also cover a file that already existed.
+fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), KeyError> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(io_err(path))?;
+        file.write_all(contents).map_err(io_err(path))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(io_err(path))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents).map_err(io_err(path))
+    }
+}
+
+/// Keys written by older code (including the TypeScript server) may be group/world readable.
+fn tighten_existing_private_keys(private_path: &Path, archive: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let archived = fs::read_dir(archive)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "key"));
+        for path in std::iter::once(private_path.to_path_buf()).chain(archived) {
+            if path.exists()
+                && let Err(err) = fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            {
+                tracing::warn!(
+                    "[RsaKeyManager] could not restrict permissions of {}: {err}",
+                    path.display()
+                );
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (private_path, archive);
+    }
 }
 
 #[cfg(test)]
@@ -797,5 +867,48 @@ mod tests {
         }
         serving.close_file_watcher();
         assert!(reloaded, "still on {before}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_key_files_and_dirs_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        let manager = RsaKeyManager::init_with_modulus(&certs, 2048).expect("init");
+        manager.rotate_key(None).expect("rotate");
+
+        let mode = |p: &Path| fs::metadata(p).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode(&certs.join("private.key")), 0o600);
+        assert_eq!(mode(&certs.join("archived")), 0o700);
+        let archived_keys: Vec<_> = fs::read_dir(certs.join("archived"))
+            .expect("read archive")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "key"))
+            .collect();
+        assert!(!archived_keys.is_empty());
+        for key in archived_keys {
+            assert_eq!(mode(&key), 0o600);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_tightens_keys_created_with_loose_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        RsaKeyManager::init_with_modulus(&certs, 2048).expect("init");
+        let private = certs.join("private.key");
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o644)).expect("loosen");
+
+        RsaKeyManager::init_with_modulus(&certs, 2048).expect("reinit");
+        let mode = fs::metadata(&private)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
