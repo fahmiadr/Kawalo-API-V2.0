@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
-use sqlx::{ConnectOptions, MySqlPool};
+use sqlx::{ConnectOptions, Connection, MySqlPool};
 
 use crate::core::config::Config;
 
@@ -14,6 +14,9 @@ const DEFAULT_POOL_SIZE: u32 = 10;
 const STARTUP_RETRIES: u32 = 5;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_secs(2);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(3000);
+/// A pooled connection idle for at least this long is pinged before reuse, so a restarted server
+/// costs a reconnect instead of a failed request (the MariaDB connector validates after 500 ms).
+const PING_AFTER_IDLE: Duration = Duration::from_millis(500);
 /// Queries slower than this are logged at WARN.
 const SLOW_QUERY: Duration = Duration::from_millis(100);
 
@@ -84,7 +87,17 @@ pub fn pool_options(
         .log_slow_statements(log::LevelFilter::Warn, SLOW_QUERY);
     let pool = MySqlPoolOptions::new()
         .max_connections(max_connections)
-        .acquire_timeout(connect_timeout);
+        .acquire_timeout(connect_timeout)
+        // sqlx pings on every acquire by default, which costs a round trip per query.
+        .test_before_acquire(false)
+        .before_acquire(|conn, meta| {
+            Box::pin(async move {
+                if meta.idle_for >= PING_AFTER_IDLE {
+                    conn.ping().await?;
+                }
+                Ok(true)
+            })
+        });
     Ok((options, pool))
 }
 
