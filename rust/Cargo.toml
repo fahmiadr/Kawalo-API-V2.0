@@ -48,6 +48,13 @@ all = { level = "warn", priority = -1 }
 [profile.dev.package."*"]
 opt-level = 3
 
+# Panics stay unwinding: the panic-catching layer turns a handler panic into a 500 instead of
+# aborting the process.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
 [[bin]]
 name = "kawalo-api"
 path = "src/main.rs"
