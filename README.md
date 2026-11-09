@@ -44,7 +44,7 @@ selain itu dilewati.
 
 `prisma/` (schema + migrasi SQL) adalah sumber kebenaran skema, dan tabel `_prisma_migrations` di database nyata sudah
 terisi. Prisma kini hanya alat migrasi: `package.json` hanya berisi `prisma` dan `dotenv`, dan `prisma.config.ts` membaca `DATABASE_URL`
-dari `.env.dev` / `.env`. Server Rust tidak memakai Prisma Client (folder `generated/` sudah dihapus, jadi jangan menjalankan `prisma generate`).
+dari `.env.dev` / `.env`. Server Rust tidak memakai Prisma Client (`schema.prisma` tanpa blok `generator`, folder `generated/` sudah dihapus; `prisma generate` tidak dipakai).
 
 Migrasi baru: tulis SQL di `prisma/migrations/YYYYMMDDHHMMSS_deskripsi/migration.sql`, lalu `npm run prisma:migrate:deploy`.
 
