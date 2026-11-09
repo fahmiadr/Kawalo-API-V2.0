@@ -16,7 +16,14 @@ export default [
       await get('master types (gamma, none)', '/master-types', 'admin_g3', { expect: 200 });
       await get('master types without active group', '/master-types', 'user_nogroup', { expect: 200 });
       await get('master types without token', '/master-types', null, { expect: 401 });
-      await get('master-types is not captured by /:id', '/master-types/', 'admin_g1');
+      await get('master-types with a trailing slash', '/master-types/', 'admin_g1');
+      for (const method of ['PUT', 'PATCH', 'DELETE', 'POST']) {
+        await get(`${method} master-types is answered by /:id`, '/master-types', 'admin_g1', { method, body: { guest_name: 'x' } });
+        await get(`${method} master-types as guard`, '/master-types', 'guard1_g1', { method, body: { guest_name: 'x' } });
+        await get(`${method} master-types without token`, '/master-types', null, { method, body: { guest_name: 'x' } });
+        await get(`${method} master-types with invalid body`, '/master-types', 'admin_g1', { method, body: { guest_name: '' } });
+      }
+      await get('acknowledge on master-types', '/master-types/acknowledge', 'admin_g1', { method: 'PATCH', body: {} });
 
       await listMatrix(t, {
         path: V1,
