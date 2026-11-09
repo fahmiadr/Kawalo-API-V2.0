@@ -14,6 +14,8 @@ rust/parity/services.sh run --only guest,incident --verbose
 rust/parity/services.sh run --slow         # also the 30s PTT time-out-timer scenario
 rust/parity/services.sh run --ignore-details   # skip `details` of error bodies (see below)
 rust/parity/services.sh servers ts-ts      # self-check: both sides TypeScript, must be 100% green
+rust/parity/services.sh relay              # PTT across two processes on one Redis: ts+ts, rs+rs, ts+rs, rs+ts transcripts must be identical
+rust/parity/services.sh race               # parallel refresh of one token on both servers: same outcome shapes
 rust/parity/services.sh stop               # everything (mariadb, redis, servers)
 ```
 
@@ -34,6 +36,8 @@ Tokens come from `mint-token.mts` (real `TokenService` + `RsaKeyManager`, key ma
 the matching `auth:user:<id>:session_ver` keys into both Redis instances. `run.mjs` calls it automatically;
 the result is cached in `.cache/tokens.json` (git-ignored, valid 15 minutes).
 
+Every decision about a difference is recorded in `KNOWN_DIFFERENCES.md`; the gate that must be 0 is a no-flag run with `KW_NODE_ENV=production`.
+
 ## Layout
 
 | Path | Purpose |
@@ -44,6 +48,7 @@ the result is cached in `.cache/tokens.json` (git-ignored, valid 15 minutes).
 | `lib/ws.mjs` | tiny RFC 6455 client (custom handshake headers, rejected-handshake status/body) |
 | `lib/cases.mjs` | query matrix shared by every list endpoint |
 | `scenarios/*.mjs` | scenarios (core, auth, readonly, guest, information, incident, ptt) |
+| `relay-check.mjs`, `refresh-race.mjs` | cross-process PTT transcript and parallel refresh checks (`services.sh relay` / `race`) |
 | `seed.sql` | deterministic dummy data (groups alpha/beta/gamma, users with every role/flag, guests, feeds, attendance, duty journeys, incidents) |
 | `mint-token.mts`, `services.sh` | tokens, services |
 
@@ -88,7 +93,7 @@ WebSocket/SSE reads are strict-order: `expect` takes the next frame, so an extra
 - The exact `x-request-id` value, JWT signature bytes, `iat`/`exp` values, refresh token bytes: random by design.
 - The 101 upgrade response headers except `Upgrade` and the subprotocol echo: Elysia leaks `content-type: text/plain`, CORS and rate-limit headers there; no client depends on them.
 - `details` of error bodies only with `--ignore-details`. By default they ARE compared (TS `development` mode returns TypeBox text such as `/email: Expected property 'email' to be string but found: undefined`). A practical gate: run once with `KW_NODE_ENV=production` (details absent) as the hard requirement, once in development to see how far the validation messages match.
-- Not exercised, with reason: multi-instance PTT relay (needs two processes per side); concurrent refresh of one token (the Redis lock yields either a 429 or the grace tokens, timing dependent); `/health/ready` with a dead dependency (would need killing the shared services); refresh-token expiry (14 days); `tkuser` ids beyond int32 (Prisma error text is engine specific); a rate-limited request to an unknown route (the TS process crashes, see below); key rotation / file watcher; log output; graceful shutdown.
+- Not exercised by the scenarios, with reason: multi-instance PTT relay and concurrent refresh (covered by `services.sh relay` / `race`); `/health/ready` with a dead dependency (checked by hand, see KNOWN_DIFFERENCES.md); refresh-token expiry (14 days); `tkuser` ids beyond int32 (Prisma error text is engine specific); a rate-limited request to an unknown route (the TS process crashes, see below); key rotation / file watcher; log output; graceful shutdown.
 
 ## TS behaviours the harness pins down (Rust must reproduce them or the diff shows)
 
