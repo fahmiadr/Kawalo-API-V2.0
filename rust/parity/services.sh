@@ -5,6 +5,8 @@
 #   services.sh servers ts-ts|ts-rs   (re)start server A (TS) and B (TS or Rust)
 #   services.sh reset            truncate + reseed both databases, flush both Redis (servers keep running)
 #   services.sh run [run.mjs args]    restart servers (same mode as last `servers`), reset, then node run.mjs against A/B
+#   services.sh race             parallel refresh of one token against A and B (outcome shapes must match)
+#   services.sh relay            PTT across two processes sharing one Redis: ts+ts, rs+rs, ts+rs, rs+ts must give identical transcripts
 #   services.sh status | stop | stop-servers
 #
 # Everything lives under /tmp/kw-parity; ports are deliberately away from the dev defaults.
@@ -163,7 +165,35 @@ cmd_run() {
     --redis "redis://127.0.0.1:$REDIS_A_PORT,redis://127.0.0.1:$REDIS_B_PORT" "$@"
 }
 
+# Extra instances on :3421 (TS, Redis A), :3412 (Rust, Redis B) and :3413 (Rust, Redis A) next to A and B.
+cmd_relay() {
+  local out="$BASE/relay"
+  mkdir -p "$out"
+  start_server A ts "$PORT_A" "$DB_A" "$REDIS_A_PORT"
+  start_server B rs "$PORT_B" "$DB_B" "$REDIS_B_PORT"
+  start_server X ts 3421 "$DB_A" "$REDIS_A_PORT"
+  start_server Y rs 3412 "$DB_B" "$REDIS_B_PORT"
+  start_server Z rs 3413 "$DB_A" "$REDIS_A_PORT"
+  cmd_reset
+  # mints the tokens and their session_ver keys; the scenario itself is irrelevant
+  node "$HERE/run.mjs" --a "http://127.0.0.1:$PORT_A" --b "http://127.0.0.1:$PORT_B" \
+    --redis "redis://127.0.0.1:$REDIS_A_PORT,redis://127.0.0.1:$REDIS_B_PORT" --only core/jwks >/dev/null
+  local rc=0 pair
+  for pair in "ts-ts $PORT_A 3421" "rs-rs $PORT_B 3412" "ts-rs $PORT_A 3413" "rs-ts 3413 $PORT_A"; do
+    set -- $pair
+    node "$HERE/relay-check.mjs" --left "http://127.0.0.1:$2" --right "http://127.0.0.1:$3" >"$out/$1.json"
+  done
+  for pair in rs-rs ts-rs rs-ts; do
+    if diff -q "$out/ts-ts.json" "$out/$pair.json" >/dev/null; then echo "PASS  relay ts-ts == $pair"
+    else echo "FAIL  relay ts-ts != $pair (diff $out/ts-ts.json $out/$pair.json)"; rc=1; fi
+  done
+  stop_port 3421; stop_port 3412; stop_port 3413
+  return $rc
+}
+
 case "${1:-}" in
+  race) cmd_reset; node "$HERE/refresh-race.mjs" --a "http://127.0.0.1:$PORT_A" --b "http://127.0.0.1:$PORT_B" ;;
+  relay) cmd_relay ;;
   start) cmd_start ;;
   reset) cmd_reset ;;
   servers) shift; cmd_servers "$@" ;;
