@@ -4,12 +4,14 @@
 //! equivalent of the derived `currentUser` / `isSessionStale` pair for routes that need the
 //! `requireRole` flavour of the 401 message.
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
 
 use crate::core::constants::AUTH_TOKEN_TYPE;
 use crate::core::error::{ApiError, ErrorCode};
+use crate::core::extract::json::ValidatedJson;
+use crate::core::extract::validate::Validate;
 use crate::core::security::verify_access_token;
 use crate::core::state::AppState;
 
@@ -176,8 +178,8 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     (!token.is_empty()).then_some(token)
 }
 
-async fn authenticate(parts: &Parts, state: &AppState) -> Result<Auth, ApiError> {
-    match bearer_token(&parts.headers) {
+async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<Auth, ApiError> {
+    match bearer_token(headers) {
         Some(token) => authenticate_token(state, token).await,
         None => Ok(Auth::Anonymous),
     }
@@ -190,7 +192,7 @@ impl FromRequestParts<AppState> for AuthContext {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        authenticate(parts, state).await.map(Self)
+        authenticate(&parts.headers, state).await.map(Self)
     }
 }
 
@@ -201,7 +203,38 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        authenticate(parts, state).await?.require_auth()
+        authenticate(&parts.headers, state).await?.require_auth()
+    }
+}
+
+/// JSON body plus caller for routes with a request schema.
+///
+/// Elysia validates the body before running `requireAuth`/`requireRole`, so a bad body with no
+/// token is 422, not 401. axum extractors run in argument order and the body must come last, which
+/// would flip that order; this extractor parses and validates the body first, then resolves the
+/// caller. The auth outcome is returned unresolved so the handler picks `require_auth` or
+/// `require_role` and gets the matching 401 text.
+///
+/// ```ignore
+/// async fn create(AuthedJson(auth, body): AuthedJson<CreateDto>) -> ApiResult<Out> {
+///     let user = auth.require_role(&["ADMIN", "GUARD"])?;
+///     ..
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthedJson<T>(pub Auth, pub T);
+
+impl<T> FromRequest<AppState> for AuthedJson<T>
+where
+    T: serde::de::DeserializeOwned + Validate + Send,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
+        let headers = req.headers().clone();
+        let ValidatedJson(body) = ValidatedJson::<T>::from_request(req, state).await?;
+        let auth = authenticate(&headers, state).await?;
+        Ok(Self(auth, body))
     }
 }
 

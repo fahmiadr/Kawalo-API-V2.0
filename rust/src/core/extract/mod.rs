@@ -5,7 +5,7 @@ pub mod json;
 pub mod query;
 pub mod validate;
 
-pub use auth::{Auth, AuthContext, CurrentUser, authenticate_token};
+pub use auth::{Auth, AuthContext, AuthedJson, CurrentUser, authenticate_token};
 pub use json::ValidatedJson;
 pub use query::ValidatedQuery;
 pub use validate::{Validate, ValidationErrors};

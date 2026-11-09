@@ -151,7 +151,8 @@ mod extractors {
     use axum::routing::{get, post};
     use kawalo_api::core::error::ApiError;
     use kawalo_api::core::extract::{
-        AuthContext, CurrentUser, Validate, ValidatedJson, ValidatedQuery, ValidationErrors,
+        AuthContext, AuthedJson, CurrentUser, Validate, ValidatedJson, ValidatedQuery,
+        ValidationErrors,
     };
     use kawalo_api::core::response::{ApiResult, ok};
     use kawalo_api::core::state::AppState;
@@ -210,6 +211,13 @@ mod extractors {
                 post(
                     |ValidatedJson(body): ValidatedJson<Echo>| async move { ok(body.title, "ok") },
                 ),
+            )
+            .route(
+                "/_t/authed-echo",
+                post(|AuthedJson(auth, body): AuthedJson<Echo>| async move {
+                    let user = auth.require_role(&["ADMIN"])?;
+                    ok(json!({"by": user.email, "title": body.title}), "ok")
+                }),
             )
             .route(
                 "/_t/page",
@@ -276,6 +284,37 @@ mod extractors {
             body["message"],
             "Anda tidak memiliki wewenang untuk mengakses sumber daya ini."
         );
+    }
+
+    #[tokio::test]
+    async fn authed_json_validates_the_body_before_authenticating() {
+        let app = app().await;
+        let bad = json!({"title": ""});
+        let good = json!({"title": "ok"});
+
+        let (status, body) = app.call("POST", "/_t/authed-echo", None, Some(&bad)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error_code"], "VALIDATION_ERROR");
+
+        let (status, body) = app.call("POST", "/_t/authed-echo", None, Some(&good)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body["message"],
+            "Akses tidak diizinkan. Silakan login terlebih dahulu."
+        );
+
+        let guard = app.token_for("guard-aj@test.id", "grp-test-1", false).await;
+        let (status, _) = app
+            .call("POST", "/_t/authed-echo", Some(&guard), Some(&good))
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let admin = app.token_for("admin-aj@test.id", "grp-test-1", true).await;
+        let (status, body) = app
+            .call("POST", "/_t/authed-echo", Some(&admin), Some(&good))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["by"], "admin-aj@test.id");
     }
 
     #[tokio::test]
