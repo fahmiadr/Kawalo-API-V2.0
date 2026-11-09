@@ -47,7 +47,7 @@ export const incidentRoutes = new Elysia({ prefix: '/incidents' })
       response: ApiResponseSchema(IncidentDetailResponseDto),
     },
   )
-  // SSE: tanpa skema response (body berupa stream)
+  // SSE: no response schema because the body is a stream
   .get(
     '/:id/stream',
     ({ params, currentUser, set, request }) =>

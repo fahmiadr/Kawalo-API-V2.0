@@ -4,7 +4,7 @@ import type {
   IncidentEventPublisher,
 } from '@features/incident/domain/repositories/incident.repository';
 
-/** Data sudah tersimpan saat event dikirim; kegagalan pub/sub tidak boleh menggagalkan request. */
+/** The data is already saved when the event is sent, so a pub/sub failure must not fail the request. */
 export async function safePublish(
   publisher: IncidentEventPublisher,
   incidentId: string,

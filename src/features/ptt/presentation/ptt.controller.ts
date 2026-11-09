@@ -33,11 +33,11 @@ export class PttController {
   constructor(
     private readonly redisRepo: PttRedisRepository = pttRedisRepository,
     private readonly roomRegistry: PttRoomRegistry = pttRoomRegistry,
-    /** Relay antar-instance (Redis pub/sub). Tanpa relay: perilaku single-instance. */
+    /** Cross-instance relay (Redis pub/sub). Without it the controller behaves as a single instance. */
     private readonly relay?: PttClusterRelay,
   ) {}
 
-  /** Fan-out ke soket lokal, lalu teruskan ke instance lain. */
+  /** Fans out to local sockets, then forwards to other instances. */
   private broadcastJson(groupUid: string, payload: unknown, excludeSocketId?: string): void {
     this.roomRegistry.broadcastJson(groupUid, payload, excludeSocketId);
     this.relay?.publishJson(groupUid, payload, excludeSocketId);
@@ -203,7 +203,7 @@ export class PttController {
               reason: 'ADMIN_OVERRIDE',
               preemptedBy: userName,
             };
-            // Pembicara sebelumnya bisa tersambung ke instance lain
+            // The previous speaker may be connected to another instance
             this.relay?.publishPreempted(groupUid, prevSpeaker.userId, revokedFrame);
 
             if (prevClient) {

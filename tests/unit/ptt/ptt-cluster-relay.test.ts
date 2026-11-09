@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type Listener = (channel: Buffer, message: Buffer) => void;
 
-/** Redis pub/sub dalam memori: satu hub dipakai bersama oleh beberapa "instance". */
+/** In-memory Redis pub/sub: one hub shared by several "instances". */
 class FakeHub {
   private subs = new Set<{ channels: Set<string>; listener?: Listener }>();
 
@@ -27,8 +27,12 @@ class FakeHub {
     const sub: { channels: Set<string>; listener?: Listener } = { channels: new Set() };
     this.subs.add(sub);
     return {
-      subscribe: async (...chs: string[]) => void chs.forEach((c) => sub.channels.add(c)),
-      unsubscribe: async (...chs: string[]) => void chs.forEach((c) => sub.channels.delete(c)),
+      subscribe: async (...chs: string[]) => {
+        for (const c of chs) sub.channels.add(c);
+      },
+      unsubscribe: async (...chs: string[]) => {
+        for (const c of chs) sub.channels.delete(c);
+      },
       on: (_event: string, l: Listener) => {
         sub.listener = l;
       },
@@ -46,11 +50,11 @@ const sent = (w: ReturnType<typeof ws>) =>
 
 const registries: PttRoomRegistry[] = [];
 afterEach(() => {
-  for (const r of registries) r.clearAll(); // matikan timer TOT 30 dtk
+  for (const r of registries) r.clearAll(); // stops the 30s TOT timers
   registries.length = 0;
 });
 
-/** Satu "instance server": registry + repo (Redis di-mock) + relay di hub bersama. */
+/** One "server instance": registry + repo (Redis mocked) + relay on the shared hub. */
 function makeInstance(
   hub: FakeHub,
   acquire: () => object = () => ({ granted: true, preempted: false }),
@@ -106,7 +110,7 @@ describe('PttClusterRelay (multi-instance)', () => {
     const audioOf = (w: ReturnType<typeof ws>) => sent(w).filter((f) => Buffer.isBuffer(f));
     expect(audioOf(remoteListenerWs)).toHaveLength(1);
     expect(Buffer.compare(audioOf(remoteListenerWs)[0], audio)).toBe(0);
-    expect(audioOf(localListenerWs)).toHaveLength(1); // tidak ganda (relay membuang pesan sendiri)
+    expect(audioOf(localListenerWs)).toHaveLength(1); // not duplicated: the relay drops its own messages
     expect(audioOf(speakerWs)).toHaveLength(0);
   });
 
@@ -144,7 +148,7 @@ describe('PttClusterRelay (multi-instance)', () => {
     });
     expect(A.registry.getActiveSpeaker(group)).toBeNull();
 
-    // audio terlambat dari guard dibuang & tidak diteruskan ke instance B
+    // late audio from the guard is dropped and not forwarded to instance B
     A.controller.handleBinaryAudioFrame(
       's_guard',
       group,
@@ -160,7 +164,7 @@ describe('PttClusterRelay (multi-instance)', () => {
     const A = makeInstance(hub);
     const w = ws('s1');
     await A.controller.handleConnection(w, group, guard);
-    expect(hub.subscriptionCount()).toBe(2); // ctl + audio
+    expect(hub.subscriptionCount()).toBe(2); // ctl and audio channels
     await A.controller.handleDisconnection('s1', group, guard);
     expect(hub.subscriptionCount()).toBe(0);
     await A.controller.handleConnection(ws('s2'), group, guard);

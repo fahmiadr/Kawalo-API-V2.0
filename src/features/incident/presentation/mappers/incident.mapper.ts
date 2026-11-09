@@ -16,14 +16,13 @@ import type { CreateIncidentInput } from '@features/incident/usecases/create-inc
 import type { IncidentDetail } from '@features/incident/usecases/get-incident-detail.usecase';
 import type { GetIncidentsInput } from '@features/incident/usecases/get-incidents.usecase';
 
-/** Date atau string ISO (event dari Redis sudah berupa string setelah JSON round-trip). */
+/** Accepts Date or ISO string: events coming from Redis are strings after the JSON round trip. */
 const iso = (d: Date | string): string => new Date(d).toISOString();
 
 const cleanPhotos = (photos?: string[]): string[] =>
   (photos ?? []).map((p) => cleanString(p)).filter((p): p is string => Boolean(p));
 
 export class IncidentMapper {
-  // ---------- request ----------
   public static toGetIncidentsInput(
     query: GetIncidentsQueryDtoType,
     currentUser: AuthenticatedUserPayload,
@@ -62,7 +61,7 @@ export class IncidentMapper {
     return { message: cleanQueryString(body.message) ?? '', photos: cleanPhotos(body.photos) };
   }
 
-  // ---------- response (snake_case sesuai kontrak app Flutter) ----------
+  // Responses use snake_case to match the Flutter app contract.
   public static toIncidentResponse(i: IncidentEntity) {
     return {
       id: i.id,
@@ -79,7 +78,7 @@ export class IncidentMapper {
       resolved_by: i.resolvedBy,
       resolved_by_name: i.resolvedByName,
       resolved_at: i.resolvedAt ? iso(i.resolvedAt) : null,
-      deleted_at: null, // insiden terhapus tidak pernah dikembalikan
+      deleted_at: null, // deleted incidents are never returned
       created_at: iso(i.createdAt),
       updated_at: iso(i.updatedAt),
     };
@@ -105,8 +104,7 @@ export class IncidentMapper {
     };
   }
 
-  // ---------- SSE ----------
-  /** Nama event & payload harus sama dengan IncidentReplyMapper.parseSseMessage di app. */
+  /** Event names and payloads must match IncidentReplyMapper.parseSseMessage in the app. */
   public static toSseFrame(event: IncidentEvent): { id?: string; name: string; data: unknown } {
     switch (event.type) {
       case 'new_reply':

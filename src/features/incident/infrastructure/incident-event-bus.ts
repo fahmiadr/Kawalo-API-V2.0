@@ -11,9 +11,9 @@ type Listener = (event: IncidentEvent) => void;
 const channel = (incidentId: string) => `incident:${incidentId}:events`;
 
 /**
- * Pub/sub Redis: event tersebar ke semua instance server, jadi klien SSE yang
- * tersambung ke instance lain tetap menerima balasan.
- * Satu koneksi subscriber bersama; subscribe/unsubscribe per channel saat listener pertama/terakhir.
+ * Redis pub/sub, so an SSE client connected to another server instance still receives replies.
+ * One shared subscriber connection; a channel is subscribed on its first listener and
+ * unsubscribed on its last.
  */
 export class IncidentEventBus implements IncidentEventPublisher {
   private subscriber: Redis | null = null;
@@ -23,7 +23,6 @@ export class IncidentEventBus implements IncidentEventPublisher {
     await redis.publish(channel(incidentId), JSON.stringify(event));
   }
 
-  /** Mengembalikan fungsi unsubscribe. */
   public async subscribe(incidentId: string, listener: Listener): Promise<() => Promise<void>> {
     const sub = this.getSubscriber();
     const ch = channel(incidentId);

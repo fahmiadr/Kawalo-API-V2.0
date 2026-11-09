@@ -98,7 +98,7 @@ export class IncidentHandler {
     return ApiResponse.success(null, 'Insiden berhasil dihapus');
   }
 
-  /** Cek akses (grup + keberadaan) dulu; baru buka stream. Gagal -> JSON error biasa, bukan SSE. */
+  /** Checks access (group + existence) before opening the stream; a failure is a plain JSON error, not SSE. */
   public async stream({ params, currentUser, set, request }: WithParams & { request: Request }) {
     const check = await this.getIncidentDetail.execute({ id: params.id, currentUser });
     if (check.isFailure()) return this.fail(set, check.failure);

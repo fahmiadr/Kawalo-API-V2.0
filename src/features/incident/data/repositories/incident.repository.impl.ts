@@ -63,8 +63,8 @@ function toReply(r: ReplyRow): IncidentReplyEntity {
 }
 
 /**
- * Implementasi Prisma langsung (tanpa lapisan datasource terpisah: tidak ada logika
- * di antaranya). Semua query selalu dibatasi GroupUID dan DeletedAt IS NULL.
+ * Talks to Prisma directly (no separate datasource layer: there would be no logic in between).
+ * Every query is scoped to GroupUID and DeletedAt IS NULL.
  */
 export class IncidentRepositoryImpl implements IncidentRepository {
   constructor(private readonly db: PrismaClient = prisma) {}
@@ -106,7 +106,7 @@ export class IncidentRepositoryImpl implements IncidentRepository {
   public async listReplies(incidentId: string): Promise<IncidentReplyEntity[]> {
     const rows = await this.db.tkincidentreply.findMany({
       where: { IncidentUID: incidentId },
-      orderBy: { ReplyUID: 'asc' }, // UUIDv7 -> urut waktu
+      orderBy: { ReplyUID: 'asc' }, // UUIDv7 ids sort by creation time
     });
     return rows.map(toReply);
   }
@@ -149,7 +149,7 @@ export class IncidentRepositoryImpl implements IncidentRepository {
     by: { email: string; name: string },
   ): Promise<IncidentEntity | null> {
     const now = new Date();
-    // updateMany + filter Status=OPEN: atomik, dua resolve bersamaan hanya satu yang menang.
+    // updateMany filtered on Status=OPEN is atomic: of two concurrent resolves only one wins.
     await this.db.tkincident.updateMany({
       where: { IncidentUID: id, Status: 'OPEN' satisfies IncidentStatus, DeletedAt: null },
       data: {

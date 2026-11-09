@@ -8,13 +8,13 @@ export interface IncidentEventSource {
   ): Promise<() => Promise<void>>;
 }
 
-const HEARTBEAT_MS = 15_000; // app memutus koneksi bila senyap > 30 detik
+const HEARTBEAT_MS = 15_000; // the app drops the connection after 30s of silence
 
 /**
- * Stream SSE untuk satu thread insiden.
- * - Subscribe dulu, baru kirim `sync_required` (bila reconnect) agar tidak ada event yang terlewat.
- * - Reconnect dengan Last-Event-ID -> `sync_required`: app mengambil ulang detail (menangani
- *   balasan, resolve, dan delete yang terlewat sekaligus) tanpa buffer replay di server.
+ * SSE stream for one incident thread.
+ * - Subscribe first, then send `sync_required` (on reconnect) so no event can slip through.
+ * - A reconnect with Last-Event-ID gets `sync_required`: the app refetches the detail, which covers
+ *   missed replies, resolves and deletes at once, so the server keeps no replay buffer.
  */
 export function createIncidentSseStream(opts: {
   incidentId: string;
@@ -32,7 +32,7 @@ export function createIncidentSseStream(opts: {
         try {
           controller.enqueue(encoder.encode(chunk));
         } catch {
-          // stream sudah ditutup
+          // stream already closed
         }
       };
 
@@ -56,7 +56,7 @@ export function createIncidentSseStream(opts: {
         try {
           controller.close();
         } catch {
-          // sudah tertutup
+          // already closed
         }
       });
 
