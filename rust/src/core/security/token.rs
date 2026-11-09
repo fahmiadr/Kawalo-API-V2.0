@@ -5,7 +5,15 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{Algorithm, Header, Validation, decode, decode_header, encode};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use aws_lc_rs::error::Unspecified;
+use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::signature::RSA_PKCS1_SHA256;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use dashmap::DashMap;
+use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -21,8 +29,10 @@ pub enum TokenError {
     InvalidSessionVersion(i64),
     #[error(transparent)]
     Key(#[from] KeyError),
-    #[error("signing failed: {0}")]
-    Sign(#[from] jsonwebtoken::errors::Error),
+    #[error("signing failed")]
+    Sign(Unspecified),
+    #[error("serialising the token failed: {0}")]
+    Encode(#[from] serde_json::Error),
 }
 
 impl From<TokenError> for ApiError {
@@ -60,6 +70,13 @@ pub struct SignedToken {
 }
 
 #[derive(Serialize)]
+struct JwtHeader<'a> {
+    typ: &'static str,
+    alg: &'static str,
+    kid: &'a str,
+}
+
+#[derive(Serialize)]
 struct Claims<'a> {
     #[serde(flatten)]
     user: &'a JwtUserPayload,
@@ -83,8 +100,11 @@ pub fn sign_access_token(
         return Err(TokenError::InvalidSessionVersion(payload.session_ver));
     }
     let signing = keys.signing_key()?;
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(signing.kid);
+    let header = JwtHeader {
+        typ: "JWT",
+        alg: "RS256",
+        kid: &signing.kid,
+    };
 
     let iat = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -97,7 +117,22 @@ pub fn sign_access_token(
         iat,
         exp: iat + expires_in,
     };
-    let token = encode(&header, &claims, &signing.key)?;
+    let mut token = String::with_capacity(1024);
+    URL_SAFE_NO_PAD.encode_string(serde_json::to_vec(&header)?, &mut token);
+    token.push('.');
+    URL_SAFE_NO_PAD.encode_string(serde_json::to_vec(&claims)?, &mut token);
+    let mut signature = vec![0; signing.key.public_modulus_len()];
+    signing
+        .key
+        .sign(
+            &RSA_PKCS1_SHA256,
+            &SystemRandom::new(),
+            token.as_bytes(),
+            &mut signature,
+        )
+        .map_err(TokenError::Sign)?;
+    token.push('.');
+    URL_SAFE_NO_PAD.encode_string(signature, &mut token);
     Ok(SignedToken { token, expires_in })
 }
 
@@ -107,6 +142,21 @@ pub fn sign_access_token(
 /// the TypeScript version, `role` is upper-cased and the `allow_*` flags use JavaScript
 /// truthiness.
 pub fn verify_access_token(keys: &RsaKeyManager, token: &str) -> Option<JwtUserPayload> {
+    let cache = keys.verified_tokens();
+    let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+    let epoch = cache.epoch();
+    if let Some(payload) = cache.get(&digest, epoch) {
+        return Some(payload);
+    }
+    let (payload, exp) = verify_signed(keys, token)?;
+    if let Some(exp) = exp {
+        cache.insert(digest, epoch, exp, payload.clone());
+    }
+    Some(payload)
+}
+
+/// Full verification; also returns the token's `exp` so the result can be cached.
+fn verify_signed(keys: &RsaKeyManager, token: &str) -> Option<(JwtUserPayload, Option<u64>)> {
     let kid = decode_header(token).ok()?.kid;
     let key = keys.verifying_key(kid.as_deref()).ok()?;
 
@@ -148,7 +198,8 @@ pub fn verify_access_token(keys: &RsaKeyManager, token: &str) -> Option<JwtUserP
         Some(_) => true,
     };
 
-    Some(JwtUserPayload {
+    let exp = claims.get("exp").and_then(Value::as_u64);
+    let payload = JwtUserPayload {
         sub: text("sub")?,
         email: text("email")?,
         name: text("name")?,
@@ -158,7 +209,71 @@ pub fn verify_access_token(keys: &RsaKeyManager, token: &str) -> Option<JwtUserP
         allow_patrol: truthy("allow_patrol"),
         allow_mon_patrol: truthy("allow_mon_patrol"),
         session_ver,
-    })
+    };
+    Some((payload, exp))
+}
+
+/// Verified tokens keyed by the SHA-256 of the raw token, so the RSA verification (about 50 us
+/// for a 4096-bit key) runs once per token instead of once per request.
+///
+/// An entry is only a signature result: callers still check the session version on every request.
+/// It expires with the token's own `exp`, and a change to the key set invalidates everything
+/// through the epoch.
+#[derive(Debug, Default)]
+pub(crate) struct VerifiedTokens {
+    entries: DashMap<[u8; 32], Verified>,
+    epoch: AtomicU64,
+}
+
+#[derive(Debug)]
+struct Verified {
+    payload: JwtUserPayload,
+    exp: u64,
+    epoch: u64,
+}
+
+/// Soft bound on cached tokens; one eviction pass runs when it is reached.
+const MAX_VERIFIED_TOKENS: usize = 4096;
+
+impl VerifiedTokens {
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn invalidate(&self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn get(&self, digest: &[u8; 32], epoch: u64) -> Option<JwtUserPayload> {
+        let entry = self.entries.get(digest)?;
+        // jose rejects `exp <= now`, so the boundary second is already expired.
+        (entry.epoch == epoch && entry.exp > now_secs()).then(|| entry.payload.clone())
+    }
+
+    fn insert(&self, digest: [u8; 32], epoch: u64, exp: u64, payload: JwtUserPayload) {
+        if self.entries.len() >= MAX_VERIFIED_TOKENS {
+            let now = now_secs();
+            self.entries.retain(|_, v| v.epoch == epoch && v.exp > now);
+            if self.entries.len() >= MAX_VERIFIED_TOKENS {
+                self.entries.clear();
+            }
+        }
+        self.entries.insert(
+            digest,
+            Verified {
+                payload,
+                exp,
+                epoch,
+            },
+        );
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Opaque 64-character hex refresh token from 32 CSPRNG bytes.
@@ -286,6 +401,51 @@ mod tests {
             Some("kawalo-key-9")
         );
         assert!(verify_access_token(&keys, &after).is_some());
+    }
+
+    #[test]
+    fn repeated_verification_is_served_from_the_cache_and_matches() {
+        let (_dir, keys) = keys();
+        let token = sign_access_token(&keys, 900, &payload())
+            .expect("sign")
+            .token;
+        let first = verify_access_token(&keys, &token).expect("verify");
+        assert_eq!(keys.verified_tokens().entries.len(), 1);
+        assert_eq!(verify_access_token(&keys, &token), Some(first));
+        assert!(verify_access_token(&keys, "not.a.jwt").is_none());
+        assert_eq!(keys.verified_tokens().entries.len(), 1);
+    }
+
+    #[test]
+    fn cached_entries_expire_with_the_token_and_die_with_the_key_set() {
+        let cache = VerifiedTokens::default();
+        let (live, dead, epoch) = ([1; 32], [2; 32], cache.epoch());
+        cache.insert(live, epoch, now_secs() + 60, payload());
+        cache.insert(dead, epoch, now_secs(), payload());
+        assert!(cache.get(&live, epoch).is_some());
+        assert!(cache.get(&dead, epoch).is_none(), "exp <= now is expired");
+
+        cache.invalidate();
+        assert!(cache.get(&live, cache.epoch()).is_none());
+
+        cache.insert(live, epoch, now_secs() + 60, payload());
+        assert!(
+            cache.get(&live, cache.epoch()).is_none(),
+            "a verification that started before the change must not be served after it"
+        );
+    }
+
+    #[test]
+    fn rotating_keys_invalidates_cached_verifications() {
+        let (_dir, keys) = keys();
+        let token = sign_access_token(&keys, 900, &payload())
+            .expect("sign")
+            .token;
+        assert!(verify_access_token(&keys, &token).is_some());
+        let epoch = keys.verified_tokens().epoch();
+        keys.rotate_key(Some("kawalo-key-7")).expect("rotate");
+        assert_ne!(keys.verified_tokens().epoch(), epoch);
+        assert!(verify_access_token(&keys, &token).is_some());
     }
 
     #[test]

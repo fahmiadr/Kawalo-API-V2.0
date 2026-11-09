@@ -15,6 +15,9 @@ use kawalo_api::core::{db, health, logging, redis};
 use tokio::net::TcpListener;
 use tokio::signal;
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// How long open connections (SSE, WebSocket) get to finish after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 

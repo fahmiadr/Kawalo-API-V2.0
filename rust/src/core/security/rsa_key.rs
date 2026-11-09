@@ -16,18 +16,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use aws_lc_rs::encoding::AsDer;
+use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKey};
+use aws_lc_rs::signature::KeyPair as _;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use jsonwebtoken::{DecodingKey, EncodingKey};
+use jsonwebtoken::DecodingKey;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use rand_core06::OsRng;
-use rsa::pkcs1::DecodeRsaPublicKey;
-use rsa::pkcs8::{DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::traits::PublicKeyParts;
-use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+use crate::core::security::token::VerifiedTokens;
 
 /// Required modulus size of generated and accepted keys.
 pub const MODULUS_BITS: usize = 4096;
@@ -97,13 +97,13 @@ pub struct PruneReport {
 #[derive(Clone)]
 pub struct SigningKey {
     pub kid: String,
-    pub key: EncodingKey,
+    pub key: Arc<KeyPair>,
 }
 
 #[derive(Clone)]
 struct KeyEntry {
     kid: String,
-    signing: Option<EncodingKey>,
+    signing: Option<Arc<KeyPair>>,
     verifying: DecodingKey,
     jwk: Jwk,
     archived_at_ms: Option<u64>,
@@ -159,6 +159,7 @@ struct Inner {
     jwks_max_age_days: AtomicU64,
     rotation: Mutex<()>,
     watching: Mutex<Option<Watching>>,
+    verified: VerifiedTokens,
 }
 
 /// Handle to the shared key store; cloning is cheap.
@@ -206,6 +207,7 @@ impl RsaKeyManager {
                 jwks_max_age_days: AtomicU64::new(DEFAULT_JWKS_MAX_AGE_DAYS),
                 rotation: Mutex::new(()),
                 watching: Mutex::new(None),
+                verified: VerifiedTokens::default(),
             }),
         };
         manager.reload()?;
@@ -219,7 +221,7 @@ impl RsaKeyManager {
     pub fn reload(&self) -> Result<(), KeyError> {
         let mut store = self.inner.load_store()?;
         store.rebuild_jwks(self.jwks_max_age_days());
-        *self.inner.store.write().expect("key store lock poisoned") = store;
+        *self.inner.write() = store;
         Ok(())
     }
 
@@ -238,7 +240,7 @@ impl RsaKeyManager {
             .and_then(|e| {
                 Some(SigningKey {
                     kid: e.kid.clone(),
-                    key: e.signing.clone()?,
+                    key: Arc::clone(e.signing.as_ref()?),
                 })
             })
             .ok_or_else(|| KeyError::NoPrivateKey(store.active_kid.clone()))
@@ -256,6 +258,10 @@ impl RsaKeyManager {
             .or_else(|| store.entries.first())
             .map(|e| e.verifying.clone())
             .ok_or_else(|| KeyError::NoPublicKey(kid.unwrap_or(&store.active_kid).to_owned()))
+    }
+
+    pub(crate) fn verified_tokens(&self) -> &VerifiedTokens {
+        &self.inner.verified
     }
 
     /// The JWK set to publish.
@@ -451,6 +457,9 @@ impl Inner {
     }
 
     fn write(&self) -> std::sync::RwLockWriteGuard<'_, KeyStore> {
+        // Bumped before the lock so a verification that read the keys earlier cannot be cached
+        // afterwards.
+        self.verified.invalidate();
         self.store.write().expect("key store lock poisoned")
     }
 
@@ -473,7 +482,7 @@ impl Inner {
             || fs::read_to_string(&public_path)
                 .ok()
                 .and_then(|pem| parse_public_key(&pem))
-                .is_none_or(|key| key.size() * 8 != self.modulus_bits);
+                .is_none_or(|key| key.modulus_len() * 8 != self.modulus_bits);
 
         let active_kid = saved_kid.clone().unwrap_or_else(generate_key_id);
         if needs_new_pair {
@@ -546,13 +555,11 @@ impl KeyEntry {
         let public = parse_public_key(public_pem)
             .ok_or_else(|| invalid("not a valid RSA public key PEM".to_owned()))?;
         let (n, e) = (
-            URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),
-            URL_SAFE_NO_PAD.encode(public.e().to_bytes_be()),
+            URL_SAFE_NO_PAD.encode(public.modulus().big_endian_without_leading_zero()),
+            URL_SAFE_NO_PAD.encode(public.exponent().big_endian_without_leading_zero()),
         );
         let signing = private_pem
-            .map(|pem| {
-                EncodingKey::from_rsa_pem(pem.as_bytes()).map_err(|err| invalid(err.to_string()))
-            })
+            .map(|pem| parse_private_key(pem).map(Arc::new).map_err(invalid))
             .transpose()?;
         let verifying =
             DecodingKey::from_rsa_components(&n, &e).map_err(|err| invalid(err.to_string()))?;
@@ -573,22 +580,44 @@ impl KeyEntry {
     }
 }
 
-fn parse_public_key(pem: &str) -> Option<RsaPublicKey> {
-    RsaPublicKey::from_public_key_pem(pem)
-        .or_else(|_| RsaPublicKey::from_pkcs1_pem(pem))
-        .ok()
+fn parse_public_key(pem: &str) -> Option<PublicKey> {
+    let der = pem::parse(pem).ok()?;
+    PublicKey::from_der(der.contents()).ok()
+}
+
+/// Accepts PKCS#8 (`PRIVATE KEY`, what both servers write) and PKCS#1 (`RSA PRIVATE KEY`).
+fn parse_private_key(pem: &str) -> Result<KeyPair, String> {
+    let der = pem::parse(pem).map_err(|err| err.to_string())?;
+    let key = match der.tag() {
+        "RSA PRIVATE KEY" => KeyPair::from_der(der.contents()),
+        _ => KeyPair::from_pkcs8(der.contents()),
+    };
+    key.map_err(|err| err.to_string())
 }
 
 fn generate_pair(bits: usize) -> Result<(String, String), KeyError> {
     let generate = |reason: &dyn std::fmt::Display| KeyError::Generate(reason.to_string());
-    let private = RsaPrivateKey::new(&mut OsRng, bits).map_err(|e| generate(&e))?;
-    let private_pem = private
-        .to_pkcs8_pem(LineEnding::LF)
-        .map_err(|e| generate(&e))?;
-    let public_pem = RsaPublicKey::from(&private)
-        .to_public_key_pem(LineEnding::LF)
-        .map_err(|e| generate(&e))?;
-    Ok((private_pem.to_string(), public_pem))
+    let size = match bits {
+        2048 => KeySize::Rsa2048,
+        3072 => KeySize::Rsa3072,
+        4096 => KeySize::Rsa4096,
+        8192 => KeySize::Rsa8192,
+        other => return Err(generate(&format!("unsupported modulus size {other}"))),
+    };
+    let private = KeyPair::generate(size).map_err(|e| generate(&e))?;
+    let private_der = private.as_der().map_err(|e| generate(&e))?;
+    let public_der = private.public_key().as_der().map_err(|e| generate(&e))?;
+    Ok((
+        encode_pem("PRIVATE KEY", private_der.as_ref()),
+        encode_pem("PUBLIC KEY", public_der.as_ref()),
+    ))
+}
+
+fn encode_pem(tag: &str, der: &[u8]) -> String {
+    let config = pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF);
+    let mut pem = pem::encode_config(&pem::Pem::new(tag, der), config);
+    pem.push('\n');
+    pem
 }
 
 /// `kawalo-key-<epoch ms>`.
@@ -740,6 +769,33 @@ mod tests {
     }
 
     #[test]
+    fn pkcs1_private_keys_are_accepted() {
+        let (private_pem, public_pem) = generate_pair(TEST_BITS).expect("pair");
+        let pkcs8 = pem::parse(&private_pem).expect("pem");
+        // PrivateKeyInfo wraps the PKCS#1 key in an OCTET STRING with a two-byte long-form length.
+        let rsa_oid = [
+            0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+        ];
+        let at = pkcs8
+            .contents()
+            .windows(rsa_oid.len())
+            .position(|w| w == rsa_oid)
+            .expect("rsaEncryption algorithm id");
+        let pkcs1 = &pkcs8.contents()[at + rsa_oid.len() + 4..];
+        assert_eq!(&pkcs8.contents()[at + rsa_oid.len()..][..2], [0x04, 0x82]);
+        let pkcs1_pem = encode_pem("RSA PRIVATE KEY", pkcs1);
+
+        let from_pkcs1 =
+            KeyEntry::from_pems("k", Some(&pkcs1_pem), &public_pem, None, Path::new("t"))
+                .expect("pkcs1");
+        let from_pkcs8 =
+            KeyEntry::from_pems("k", Some(&private_pem), &public_pem, None, Path::new("t"))
+                .expect("pkcs8");
+        assert_eq!(from_pkcs1.jwk, from_pkcs8.jwk);
+        assert!(from_pkcs1.signing.is_some());
+    }
+
+    #[test]
     fn second_init_reuses_the_stored_pair() {
         let dir = tempfile::tempdir().expect("tempdir");
         let first = manager(dir.path()).jwks();
@@ -750,7 +806,7 @@ mod tests {
     fn wrong_modulus_triggers_regeneration() {
         let dir = tempfile::tempdir().expect("tempdir");
         let before = manager(dir.path()).jwks().keys[0].n.clone();
-        let after = RsaKeyManager::init_with_modulus(dir.path(), 1024)
+        let after = RsaKeyManager::init_with_modulus(dir.path(), 3072)
             .expect("init")
             .jwks()
             .keys[0]
