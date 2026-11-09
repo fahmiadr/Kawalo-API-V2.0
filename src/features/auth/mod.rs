@@ -3,6 +3,7 @@
 mod dto;
 mod handlers;
 mod login_limiter;
+mod password_check;
 mod sessions;
 mod user;
 

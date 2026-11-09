@@ -500,9 +500,11 @@ model tkuser {
   UserUID            String   @db.VarChar(64)
   UserEmail          String   @unique(map: "Email") @db.VarChar(128)
   UserName           String   @db.VarChar(128)
-  // CATATAN: Password saat ini disimpan dalam bentuk plaintext untuk kompatibilitas sistem legacy.
-  // Rencana migrasi hashing (Argon2id/Bcrypt) akan dilakukan pada fase keamanan selanjutnya.
+  // CATATAN: Password masih plaintext demi kompatibilitas sistem legacy dan tidak pernah diubah oleh API.
+  // PasswordHash (Argon2id, format PHC) diisi saat login berhasil pertama; bila terisi, ia menjadi
+  // sumber kebenaran login dan Password diabaikan oleh API.
   Password           String   @db.VarChar(64)
+  PasswordHash       String?  @db.VarChar(255)
   FCMID              String   @default("none") @db.VarChar(512)
   InstallId          String   @default("1.0.2.27") @db.VarChar(512)
   UserProfilePic     String?  @db.VarChar(2048)

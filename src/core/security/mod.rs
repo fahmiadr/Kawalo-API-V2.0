@@ -1,6 +1,7 @@
 //! Authentication primitives: signing keys, access tokens, session versions and JWKS.
 
 pub mod jwks;
+pub mod password;
 pub mod rsa_key;
 pub mod session_version;
 pub mod token;

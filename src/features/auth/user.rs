@@ -31,8 +31,7 @@ impl GroupAccess {
     }
 }
 
-/// The stored password. The legacy schema keeps it in plain text, so it is compared as is and
-/// never printed.
+/// A stored credential (legacy plain-text password or Argon2id PHC string); never printed.
 #[derive(Clone)]
 pub struct Secret(String);
 
@@ -42,6 +41,18 @@ impl Secret {
         let (a, b) = (self.0.as_bytes(), candidate.as_bytes());
         a.len() == b.len() && a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
     }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+/// How a user's password is checked. Once `PasswordHash` is set it is the only source of truth;
+/// the legacy `Password` column is then ignored.
+#[derive(Debug, Clone)]
+pub enum Credential {
+    Hash(Secret),
+    Plaintext(Secret),
 }
 
 impl std::fmt::Debug for Secret {
@@ -56,7 +67,7 @@ pub struct User {
     pub email: String,
     pub name: String,
     #[serde(skip)]
-    pub password: Secret,
+    pub credential: Credential,
     pub avatar_url: Option<String>,
     pub active_group: Option<GroupAccess>,
     pub groups: Vec<GroupAccess>,
@@ -78,6 +89,8 @@ struct UserRow {
     name: String,
     #[sqlx(rename = "Password")]
     password: String,
+    #[sqlx(rename = "PasswordHash")]
+    password_hash: Option<String>,
     #[sqlx(rename = "UserProfilePic")]
     avatar_url: Option<String>,
 }
@@ -144,7 +157,7 @@ pub async fn find_by_email(
     requested_group: Option<&str>,
 ) -> Result<Option<User>, sqlx::Error> {
     let row = sqlx::query_as::<_, UserRow>(
-        "SELECT UserId, UserEmail, UserName, Password, UserProfilePic \
+        "SELECT UserId, UserEmail, UserName, Password, PasswordHash, UserProfilePic \
          FROM tkuser WHERE UserEmail = ? LIMIT 1",
     )
     .bind(email)
@@ -166,7 +179,7 @@ pub async fn find_by_id(
         return Ok(None);
     };
     let row = sqlx::query_as::<_, UserRow>(
-        "SELECT UserId, UserEmail, UserName, Password, UserProfilePic \
+        "SELECT UserId, UserEmail, UserName, Password, PasswordHash, UserProfilePic \
          FROM tkuser WHERE UserId = ? LIMIT 1",
     )
     .bind(id)
@@ -181,11 +194,17 @@ async fn hydrate(
     requested_group: Option<&str>,
 ) -> Result<Option<User>, sqlx::Error> {
     let Some(row) = row else { return Ok(None) };
-    let (Some(email), Some(name), Some(password)) = (
+    let (Some(email), Some(name)) = (
         clean_string(Some(&row.email)),
         clean_string(Some(&row.name)),
-        clean_string(Some(&row.password)),
     ) else {
+        return Ok(None);
+    };
+    // A user without any credential cannot log in, as before.
+    let Some(credential) = clean_string(row.password_hash.as_deref())
+        .map(|hash| Credential::Hash(Secret(hash)))
+        .or_else(|| clean_string(Some(&row.password)).map(|p| Credential::Plaintext(Secret(p))))
+    else {
         return Ok(None);
     };
 
@@ -214,7 +233,7 @@ async fn hydrate(
         id: row.id.to_string(),
         email,
         name,
-        password: Secret(password),
+        credential,
         avatar_url: clean_string(row.avatar_url.as_deref()),
         active_group,
         groups,
@@ -233,5 +252,9 @@ mod tests {
         assert!(!secret.matches("rahasia12"));
         assert!(!secret.matches(""));
         assert_eq!(format!("{secret:?}"), "Secret(..)");
+        assert_eq!(
+            format!("{:?}", Credential::Hash(Secret("$argon2id$x".to_owned()))),
+            "Hash(Secret(..))"
+        );
     }
 }

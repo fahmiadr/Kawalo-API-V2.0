@@ -19,6 +19,7 @@ use crate::features::auth::dto::{
     LoginBody, LoginData, LogoutBody, RefreshBody, SwitchGroupBody, Tokens,
 };
 use crate::features::auth::login_limiter::LoginLimiter;
+use crate::features::auth::password_check::verify_login;
 use crate::features::auth::sessions::{RefreshSession, Sessions, now_unix};
 use crate::features::auth::user::{self, GroupAccess, User};
 
@@ -141,8 +142,9 @@ pub async fn login(
     }
 
     let user = user::find_by_email(&state.db, &email, group_uid.as_deref()).await?;
-    // Unknown user and wrong password are indistinguishable to the caller.
-    let Some(user) = user.filter(|u| u.password.matches(&password)) else {
+    // Unknown user and wrong password are indistinguishable to the caller, in time as well.
+    let verified = verify_login(&state.db, user.as_ref(), &password).await;
+    let Some(user) = user.filter(|_| verified) else {
         limiter.record_failure(&email, ip).await?;
         return Err(ApiError::auth());
     };
