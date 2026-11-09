@@ -119,6 +119,11 @@ certs/               Kunci RS256 (jangan di-commit)
 Pola handler: `ValidatedQuery` -> `CurrentUser`/`AuthedJson` -> `State`. Respons selalu lewat envelope
 `{success, message, data}` atau `{success:false, message, error_code?, details?}`; kode error mengikuti versi TypeScript.
 
+Body request dideskripsikan satu kali per DTO lewat `impl Body` (`Schema` dengan `Field`/`Kind`, lihat `src/core/extract/schema.rs`);
+skema itu dipakai `ValidatedJson`/`AuthedJson` dan menghasilkan teks `details` 422 yang sama dengan TypeBox di non-production
+(di production `details` tidak dikirim). Query dan path memakai `Validate`. Menambah DTO body: tulis `Schema`, tambahkan tipenya ke
+`tools/parity/typebox-corpus.mts` dan `src/features/typebox_corpus.rs`, lalu regenerasi `tests/fixtures/typebox_details.json`.
+
 ## Variabel lingkungan
 
 Dimuat dari `.env.dev|staging|prod` (sesuai `NODE_ENV`) lalu `.env` di working directory; variabel proses tidak ditimpa. Template: `.env.example`.

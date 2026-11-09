@@ -1124,12 +1124,10 @@ mod logout {
             .post("/logout", None, &json!({"refresh_token": null}))
             .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        for body in [json!("teks"), json!(null), json!(5)] {
-            let (status, _) = client.post("/logout", None, &body).await;
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-        }
-        // TypeBox accepts any array when all properties are optional.
-        for body in [json!([]), json!(["x"]), json!([1])] {
+        let (status, _) = client.post("/logout", None, &json!(null)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        // TypeBox accepts any non-null value when all properties are optional.
+        for body in [json!([]), json!(["x"]), json!([1]), json!("teks"), json!(5)] {
             let (status, _) = client.post("/logout", None, &body).await;
             assert_eq!(status, StatusCode::OK, "{body}");
         }

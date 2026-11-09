@@ -51,6 +51,7 @@ Every decision about a difference is recorded in `KNOWN_DIFFERENCES.md`; the gat
 | `relay-check.mjs`, `refresh-race.mjs` | cross-process PTT transcript and parallel refresh checks (`services.sh relay` / `race`) |
 | `seed.sql` | deterministic dummy data (groups alpha/beta/gamma, users with every role/flag, guests, feeds, attendance, duty journeys, incidents) |
 | `mint-token.mts`, `services.sh` | tokens, services |
+| `typebox-corpus.mts` | records the TS `details` text for ~1200 bodies into `tests/fixtures/typebox_details.json` (replayed by a Rust unit test) |
 
 ## Adding a scenario
 
@@ -92,7 +93,7 @@ WebSocket/SSE reads are strict-order: `expect` takes the next frame, so an extra
 - `date`, `content-length`, `connection`, `keep-alive`, `transfer-encoding`: transport detail.
 - The exact `x-request-id` value, JWT signature bytes, `iat`/`exp` values, refresh token bytes: random by design.
 - The 101 upgrade response headers except `Upgrade` and the subprotocol echo: Elysia leaks `content-type: text/plain`, CORS and rate-limit headers there; no client depends on them.
-- `details` of error bodies only with `--ignore-details`. By default they ARE compared (TS `development` mode returns TypeBox text such as `/email: Expected property 'email' to be string but found: undefined`). A practical gate: run once with `KW_NODE_ENV=production` (details absent) as the hard requirement, once in development to see how far the validation messages match.
+- `details` of error bodies only with `--ignore-details`. By default they ARE compared (TS `development` mode returns TypeBox text such as `/email: Expected property 'email' to be string but found: undefined`) and both `KW_NODE_ENV=production` and `development` runs are 0 differences.
 - Not exercised by the scenarios, with reason: multi-instance PTT relay and concurrent refresh (covered by `services.sh relay` / `race`); `/health/ready` with a dead dependency (checked by hand, see KNOWN_DIFFERENCES.md); refresh-token expiry (14 days); `tkuser` ids beyond int32 (Prisma error text is engine specific); a rate-limited request to an unknown route (the TS process crashes, see below); key rotation / file watcher; log output; graceful shutdown.
 
 ## TS behaviours the harness pins down (Rust must reproduce them or the diff shows)

@@ -180,8 +180,9 @@ mod extractors {
     use axum::Router;
     use axum::routing::{get, post};
     use kawalo_api::core::error::ApiError;
+    use kawalo_api::core::extract::schema::{Field, Kind, Schema};
     use kawalo_api::core::extract::{
-        AuthContext, AuthedJson, CurrentUser, Validate, ValidatedJson, ValidatedQuery,
+        AuthContext, AuthedJson, Body, CurrentUser, Validate, ValidatedJson, ValidatedQuery,
         ValidationErrors,
     };
     use kawalo_api::core::response::{ApiResult, ok};
@@ -196,12 +197,8 @@ mod extractors {
         title: String,
     }
 
-    impl Validate for Echo {
-        fn validate(&self) -> Result<(), ValidationErrors> {
-            let mut errors = ValidationErrors::new();
-            errors.length("title", &self.title, 1..=8);
-            errors.into_result()
-        }
+    impl Body for Echo {
+        const SCHEMA: Schema = Schema::new(&[Field::required("title", Kind::text(1, 8))]);
     }
 
     #[derive(Deserialize)]
@@ -212,7 +209,9 @@ mod extractors {
     impl Validate for Paging {
         fn validate(&self) -> Result<(), ValidationErrors> {
             let mut errors = ValidationErrors::new();
-            errors.opt_range("limit", self.limit, 0.0..=100.0);
+            if let Some(limit) = self.limit {
+                errors.range("limit", limit, 0.0..=100.0);
+            }
             errors.into_result()
         }
     }
@@ -372,7 +371,10 @@ mod extractors {
         let (status, body) = app.call("POST", "/_t/echo", None, Some(&json!({}))).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["message"], "Format data masukan tidak valid");
-        assert_eq!(body["details"], "/title: Expected required property");
+        assert_eq!(
+            body["details"],
+            "/title: Expected property 'title' to be string but found: undefined"
+        );
 
         let (status, body) = app
             .call(

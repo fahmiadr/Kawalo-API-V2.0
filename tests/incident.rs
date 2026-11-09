@@ -217,7 +217,10 @@ mod auth_and_validation {
     async fn create_and_reply_bodies_follow_the_schema() {
         let w = World::new().await;
         let bad_creates = [
-            (json!({}), "/title: Expected required property"),
+            (
+                json!({}),
+                "/title: Expected property 'title' to be string but found: undefined",
+            ),
             (json!({"title": 5}), "/title:"),
             (
                 json!({"title": "x".repeat(129)}),
@@ -225,23 +228,23 @@ mod auth_and_validation {
             ),
             (
                 json!({"title": "t", "description": "x".repeat(1025)}),
-                "/description: Expected string length less or equal to 1024",
+                "/description: Property 'description' should be one of: 'string', 'null'",
             ),
             (
                 json!({"title": "t", "category": "x".repeat(17)}),
-                "/category: Expected string length less or equal to 16",
+                "/category: Property 'category' should be one of: 'string', 'null'",
             ),
             (
                 json!({"title": "t", "glat": 90.5, "glong": 1}),
-                "/glat: Expected number to be less or equal to 90",
+                "/glat: Property 'glat' should be one of: 'number', 'null'",
             ),
             (
                 json!({"title": "t", "glat": -91, "glong": 1}),
-                "/glat: Expected number to be greater or equal to -90",
+                "/glat: Property 'glat' should be one of: 'number', 'null'",
             ),
             (
                 json!({"title": "t", "glat": 1, "glong": 181}),
-                "/glong: Expected number to be less or equal to 180",
+                "/glong: Property 'glong' should be one of: 'number', 'null'",
             ),
             (json!({"title": "t", "glat": "1"}), "/glat:"),
             (
@@ -275,7 +278,10 @@ mod auth_and_validation {
         );
         let (status, json) = w.reply(&w.andi, "inc_x", json!({})).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(json["details"], "/message: Expected required property");
+        assert_eq!(
+            json["details"],
+            "/message: Expected property 'message' to be string but found: undefined"
+        );
     }
 
     #[tokio::test]

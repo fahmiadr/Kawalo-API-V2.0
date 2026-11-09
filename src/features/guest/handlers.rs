@@ -12,11 +12,9 @@ use crate::core::pagination::{Pagination, PaginationParams, resolve_pagination};
 use crate::core::response::{ApiResult, created, ok};
 use crate::core::state::AppState;
 
-use super::dto::{
-    CreateGuestBody, DeleteBatchBody, DeleteBatchResult, GuestPath, ListQuery, MasterGuestType,
-    QrBody, UpdateGuestBody,
-};
+use super::dto::{CreateGuestBody, GuestPath, ListQuery, MasterGuestType, QrBody, UpdateGuestBody};
 use super::repository::{self as repo, GuestChanges, GuestFilter, GuestItem, NewGuest};
+use crate::features::batch::{DeleteBatchBody, DeleteBatchResult};
 
 /// Roles allowed to write; `acknowledge` is the exception and also admits the invited host.
 const STAFF: [&str; 2] = ["ADMIN", "GUARD"];

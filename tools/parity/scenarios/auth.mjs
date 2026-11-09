@@ -233,6 +233,9 @@ export default [
       await t.step('logout with no body at all', { method: 'POST', path: `${V1}/auth/logout`, ip });
       await t.step('logout with malformed json -> 400', post('/auth/logout', undefined, { ip, rawBody: '{x', expect: 400 }));
       await t.step('logout with an array body is accepted (all-optional object)', post('/auth/logout', [], { ip, expect: 200 }));
+      await t.step('logout with a string body is accepted too', post('/auth/logout', 'teks', { ip, expect: 200 }));
+      await t.step('logout with a number body is accepted too', post('/auth/logout', 5, { ip, expect: 200 }));
+      await t.step('logout with a null body -> 422', post('/auth/logout', null, { ip, expect: 422 }));
       await t.step('login (second session)', post('/auth/login', login('logout2@gamma.test'), {
         ip, expect: 200, capture: { at: 'data.tokens.access_token', rt: 'data.tokens.refresh_token' },
       }));

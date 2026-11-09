@@ -1,5 +1,6 @@
-//! Constraints beyond what serde enforces (TypeBox `minLength`, `maxLength`, `format`, `minimum`,
-//! `maximum`), plus the mapping of deserialisation errors to the 422 detail text.
+//! Query and path validation (TypeBox `minLength`, `maxLength`, `format`, `minimum`, `maximum`)
+//! with the 422 detail text, plus the pieces that [`schema`](super::schema) builds body errors
+//! from. Request bodies are described by a [`Schema`](super::schema::Schema) instead.
 //!
 //! ```
 //! use kawalo_api::core::extract::{Validate, ValidationErrors};
@@ -148,28 +149,12 @@ impl ValidationErrors {
         }
     }
 
-    /// Length of every item of a string array, reported at `path/index`.
-    pub fn each_length<S: AsRef<str>>(
-        &mut self,
-        path: &str,
-        values: &[S],
-        bounds: impl RangeBounds<usize> + Clone,
-    ) {
-        for (index, value) in values.iter().enumerate() {
-            self.length(&format!("{path}/{index}"), value.as_ref(), bounds.clone());
-        }
-    }
-
     pub fn email(&mut self, path: &str, value: &str) {
         if !EMAIL.is_match(value) {
-            let name = path.rsplit('/').next().unwrap_or(path);
-            self.push(path, format!("Property '{name}' should be email"));
-        }
-    }
-
-    pub fn opt_email(&mut self, path: &str, value: Option<&str>) {
-        if let Some(value) = value {
-            self.email(path, value);
+            self.push(
+                path,
+                format!("Property '{}' should be email", path.replace('/', ".")),
+            );
         }
     }
 
@@ -197,17 +182,25 @@ impl ValidationErrors {
         }
     }
 
-    /// [`range`](Self::range) for an optional value.
-    pub fn opt_range(&mut self, path: &str, value: Option<f64>, bounds: impl RangeBounds<f64>) {
-        if let Some(value) = value {
-            self.range(path, value, bounds);
+    /// An error about the whole value, which has no property path.
+    pub(crate) fn root(message: impl Into<String>) -> Self {
+        Self {
+            errors: vec![FieldError {
+                path: String::new(),
+                message: message.into(),
+            }],
+            decoded: Vec::new(),
         }
     }
 
-    /// Value must be one of `allowed` (a TypeBox `Union` of literals).
-    pub fn one_of(&mut self, path: &str, value: &str, allowed: &[&str]) {
-        if !allowed.contains(&value) {
-            self.push(path, format!("Expected one of: {}", allowed.join(", ")));
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.errors.truncate(len);
+    }
+
+    /// Pattern `^[0-9]+$`.
+    pub fn digits(&mut self, path: &str, value: &str) {
+        if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+            self.push(path, "Expected string to match '^[0-9]+$'");
         }
     }
 }
@@ -231,7 +224,7 @@ impl fmt::Display for ValidationErrors {
 
 impl std::error::Error for ValidationErrors {}
 
-/// Detail text for a deserialisation failure: `/field: reason` (`missing field` errors point at
+/// Detail text for a query string that failed to deserialise: `/field: reason` (`missing field` errors point at
 /// the missing field).
 pub(crate) fn describe_path_error<E: fmt::Display>(err: &serde_path_to_error::Error<E>) -> String {
     use serde_path_to_error::Segment;
@@ -316,14 +309,15 @@ mod tests {
     }
 
     #[test]
-    fn each_length_reports_the_index_and_errors_are_joined() {
+    fn errors_are_joined_and_digits_follow_the_pattern() {
         let out = run(|e| {
-            e.each_length("photos", &["ok", "toolong"], ..=3);
-            e.one_of("status", "X", &["OPEN", "RESOLVED"]);
+            e.length("a", "toolong", ..=3);
+            e.digits("ids/1", "12a");
+            e.digits("ids/2", "123");
         });
         assert_eq!(
             out,
-            "/photos/1: Expected string length less or equal to 3, /status: Expected one of: OPEN, RESOLVED"
+            "/a: Expected string length less or equal to 3, /ids/1: Expected string to match '^[0-9]+$'"
         );
     }
 }

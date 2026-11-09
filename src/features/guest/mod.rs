@@ -1,6 +1,6 @@
 //! Guest book (`/guests`), ported from `src/features/guest` on `legacy/typescript`.
 
-mod dto;
+pub(super) mod dto;
 mod handlers;
 mod repository;
 
