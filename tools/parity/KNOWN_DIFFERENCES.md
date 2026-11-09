@@ -76,11 +76,10 @@ a probe, because no DTO has one.
   a few seconds after Redis returns (a short outage recovers in about 150 ms). ioredis in TS reconnects within a
   second. Both answer the same 503 envelope while it is down.
 * Database outage: both answer the same 500 envelope, the TS driver after about 10 s, Rust after 5 s (pool acquire timeout).
-* Harness flake in `auth/login*`: the normaliser numbers JWTs by distinct string, and two logins of one user in the same
-  wall-clock second yield the identical token. A and B handle each step in parallel but Rust spends tens of ms more per
-  login on Argon2id, so now and then a second boundary falls between the two and one step reports
-  `$.body.data.tokens.access_token.$jwt: A=n B=m` (about 1 run in 4 on a loaded machine; a rerun is clean). It is not a
-  response difference.
+* Harness: JWT placeholders are numbered by claims and header, not by the token string. Two logins of one user in the same
+  wall-clock second yield identical tokens, and Rust spends tens of ms more per login on Argon2id, so a second boundary used
+  to fall between the two servers now and then and produce a `$jwt: A=n B=m` difference (about 1 run in 4). `iat` and `exp`
+  are no longer part of the identity; the claims, header and signature check are still compared.
 * `x-request-id`, `date`, JWT signatures and the exact `retry-after` second are random or clock based; the harness checks
   presence/echo and a 3 second tolerance instead of equality.
 
