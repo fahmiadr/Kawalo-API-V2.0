@@ -1,7 +1,7 @@
 # Kawalo Mobile API (Kawalo-API-V2.0)
 
 Backend REST + WebSocket + SSE untuk aplikasi Kawalo Mobile, ditulis dengan **Rust** (axum, sqlx/MariaDB, redis-rs).
-Kontraknya identik dengan versi TypeScript sebelumnya (ElysiaJS + Prisma), jadi aplikasi Flutter tidak berubah.
+Kontraknya identik dengan versi TypeScript awal (ElysiaJS + Prisma; belum pernah dideploy, tersimpan di cabang `legacy/typescript`), jadi aplikasi Flutter tidak berubah.
 Kode TypeScript asli ada di cabang `legacy/typescript`.
 
 ## Prasyarat
@@ -89,7 +89,7 @@ Login turun sekitar 5x (satu verifikasi Argon2id ~20 ms per login) dan RSS punca
 Endpoint lain tidak terpengaruh.
 
 Urutan rilis: (1) terapkan migrasi ke database (`npm run prisma:migrate:deploy`), (2) baru rilis biner baru. Biner baru men-`SELECT PasswordHash`,
-jadi tanpa migrasi login mengembalikan 500. Pembatalan: deploy ulang biner lama; kolom boleh dibiarkan karena biner lama tidak membacanya dan `Password` tidak pernah disentuh.
+jadi tanpa migrasi login mengembalikan 500. Pembatalan (bila sudah ada rilis): deploy ulang biner sebelumnya; kolom boleh dibiarkan karena biner lama tidak membacanya dan `Password` tidak pernah disentuh.
 
 **Fase 2 (belum dikerjakan):** mengosongkan `Password` (kolom `NOT NULL`, jadi string kosong) agar hanya hash yang tersisa. Hanya aman setelah semua konsumen lain
 `Password` dipastikan tidak memerlukannya **dan** setiap hash segar. Kesegaran tidak bisa diperiksa lewat SQL (hash satu arah dan tidak ada kolom sidik jari),
@@ -227,8 +227,8 @@ RSS ada di `tools/bench/results/` (`ts-vs-rust`, `perf-ts-vs-rust-after`, `perf-
 ## Deploy
 
 * Satu biner: `cargo build --release`, lalu jalankan `target/release/kawalo-api`. Tidak perlu Node, Prisma Client, atau `node_modules` saat berjalan.
-* Working directory harus berisi `certs/` (biner membaca `./certs` relatif cwd, dan file `.env.*` bila ada). Pemasangan `certs/` di server tidak berubah dari versi TypeScript.
-* **Zona waktu**: set `TZ` sama dengan lingkungan sebelumnya (mis. `Asia/Jakarta`). Fitur `operational` mengelompokkan dan memformat waktu menurut zona proses, sehingga hasilnya berbeda bila `TZ` berbeda.
+* Working directory harus berisi `certs/` (biner membaca `./certs` relatif cwd, dan file `.env.*` bila ada). Pasang `certs/` (kunci RS256) di server dengan izin 0600; jangan ikut dimasukkan ke image atau git.
+* **Zona waktu**: set `TZ` secara eksplisit (mis. `Asia/Jakarta`, zona data operasional). Fitur `operational` mengelompokkan dan memformat waktu menurut zona proses, sehingga hasilnya berbeda bila `TZ` berbeda.
 * `TRUSTED_PROXY_CIDRS` harus mencakup proxy produksi; bila tidak, `X-Forwarded-For` diabaikan dan rate limit serta log memandang semua klien sebagai satu IP.
 * Jalankan migrasi (`npm run prisma:migrate:deploy`) sebelum merilis versi yang membutuhkannya. Migrasi `tkincident*` harus sudah ada di tiap database, kalau tidak endpoint `/incidents` mengembalikan 500; begitu pula `20261110000000_add_user_password_hash` (kolom `tkuser.PasswordHash`), kalau tidak login mengembalikan 500.
 * Liveness `GET /health`, readiness `GET /health/ready`. Pada `SIGTERM`/`SIGINT` server menutup koneksi dengan tenggang 10 detik.
