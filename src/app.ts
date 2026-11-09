@@ -12,6 +12,7 @@ import { attendanceRoutes } from '@features/attendance/presentation/attendance.r
 import { authRoutes, jwksRoute } from '@features/auth/presentation/auth.routes';
 import { groupRoutes } from '@features/group/presentation/group.routes';
 import { guestRoutes } from '@features/guest/presentation/guest.routes';
+import { incidentRoutes } from '@features/incident/presentation/incident.routes';
 import { informationRoutes } from '@features/information/presentation/information.routes';
 import { operationalRoutes } from '@features/operational/presentation/operational.routes';
 import { pttWsRoute } from '@features/ptt/presentation/ptt.ws';
@@ -125,7 +126,8 @@ export const app = new Elysia({ adapter: nodeAdapter })
       .use(guestRoutes)
       .use(operationalRoutes)
       .use(attendanceRoutes)
-      .use(informationRoutes),
+      .use(informationRoutes)
+      .use(incidentRoutes),
   );
 
 export type App = typeof app;

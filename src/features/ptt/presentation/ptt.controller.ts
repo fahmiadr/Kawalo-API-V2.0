@@ -8,6 +8,8 @@ import type {
   InboundPttControlFrameDto,
   MemberCountUpdatedFrameDto,
 } from '@features/ptt/dto/ptt-frame.dto';
+import type { PttClusterRelay } from '@features/ptt/infrastructure/ptt-cluster-relay';
+import { pttClusterRelay } from '@features/ptt/infrastructure/ptt-cluster-relay';
 import {
   type PttRedisRepository,
   pttRedisRepository,
@@ -31,7 +33,15 @@ export class PttController {
   constructor(
     private readonly redisRepo: PttRedisRepository = pttRedisRepository,
     private readonly roomRegistry: PttRoomRegistry = pttRoomRegistry,
+    /** Relay antar-instance (Redis pub/sub). Tanpa relay: perilaku single-instance. */
+    private readonly relay?: PttClusterRelay,
   ) {}
+
+  /** Fan-out ke soket lokal, lalu teruskan ke instance lain. */
+  private broadcastJson(groupUid: string, payload: unknown, excludeSocketId?: string): void {
+    this.roomRegistry.broadcastJson(groupUid, payload, excludeSocketId);
+    this.relay?.publishJson(groupUid, payload, excludeSocketId);
+  }
 
   /**
    * Handle new WebSocket connection to /ws/ptt/:groupUid
@@ -53,6 +63,7 @@ export class PttController {
 
     // 1. Register socket in local pod in-memory registry
     this.roomRegistry.register(groupUid, client);
+    await this.relay?.join(groupUid);
 
     // 2. Add user to Redis Set cluster presence
     const memberCount = await this.redisRepo.addMember(groupUid, user.sub);
@@ -78,7 +89,7 @@ export class PttController {
       type: 'MEMBER_COUNT_UPDATED',
       memberCount,
     };
-    this.roomRegistry.broadcastJson(groupUid, countFrame, socketId);
+    this.broadcastJson(groupUid, countFrame, socketId);
 
     logger.info(
       `[PTT] Connected: User ${user.sub} (${client.name}/${client.role}) joined group ${groupUid}. Members: ${memberCount}`,
@@ -96,7 +107,10 @@ export class PttController {
     const wasActiveSpeaker = this.roomRegistry.isCurrentActiveSpeaker(groupUid, socketId);
 
     // 1. Unregister from in-memory registry
-    this.roomRegistry.unregister(groupUid, socketId);
+    const unregistered = this.roomRegistry.unregister(groupUid, socketId);
+    if (unregistered?.remainingCount === 0) {
+      await this.relay?.leave(groupUid);
+    }
 
     // 2. Remove user from Redis Set presence
     const memberCount = await this.redisRepo.removeMember(groupUid, user.sub);
@@ -113,7 +127,7 @@ export class PttController {
         speaker: null,
         memberCount,
       };
-      this.roomRegistry.broadcastJson(groupUid, idleFrame);
+      this.broadcastJson(groupUid, idleFrame);
       logger.info(`[PTT] Active speaker disconnected. Floor reset to IDLE in group ${groupUid}.`);
     } else {
       // Broadcast updated member count to remaining subscribers
@@ -121,7 +135,7 @@ export class PttController {
         type: 'MEMBER_COUNT_UPDATED',
         memberCount,
       };
-      this.roomRegistry.broadcastJson(groupUid, countFrame);
+      this.broadcastJson(groupUid, countFrame);
     }
 
     logger.info(
@@ -184,12 +198,15 @@ export class PttController {
             const prevSpeaker = acquireResult.previousSpeaker;
             const prevClient = this.roomRegistry.getClientByUserId(groupUid, prevSpeaker.userId);
 
+            const revokedFrame: FloorRevokedFrameDto = {
+              type: 'FLOOR_REVOKED',
+              reason: 'ADMIN_OVERRIDE',
+              preemptedBy: userName,
+            };
+            // Pembicara sebelumnya bisa tersambung ke instance lain
+            this.relay?.publishPreempted(groupUid, prevSpeaker.userId, revokedFrame);
+
             if (prevClient) {
-              const revokedFrame: FloorRevokedFrameDto = {
-                type: 'FLOOR_REVOKED',
-                reason: 'ADMIN_OVERRIDE',
-                preemptedBy: userName,
-              };
               try {
                 prevClient.ws.send(JSON.stringify(revokedFrame));
               } catch {
@@ -202,7 +219,7 @@ export class PttController {
               type: 'FLOOR_RESET',
               reason: 'PREEMPTION_FLUSH',
             };
-            this.roomRegistry.broadcastJson(groupUid, resetFrame, socketId);
+            this.broadcastJson(groupUid, resetFrame, socketId);
 
             logger.info(
               `[PTT] Admin ${user.sub} (${userName}) preempted Guard ${prevSpeaker.userId} in group ${groupUid}`,
@@ -221,7 +238,7 @@ export class PttController {
             },
             memberCount,
           };
-          this.roomRegistry.broadcastJson(groupUid, stateFrame);
+          this.broadcastJson(groupUid, stateFrame);
         } else {
           // Floor Denied
           const deniedFrame: FloorDeniedFrameDto = {
@@ -270,7 +287,7 @@ export class PttController {
           speaker: null,
           memberCount,
         };
-        this.roomRegistry.broadcastJson(groupUid, idleFrame);
+        this.broadcastJson(groupUid, idleFrame);
 
         logger.info(
           `[PTT] Floor released by user ${user.sub} in group ${groupUid}. State is now IDLE.`,
@@ -314,6 +331,7 @@ export class PttController {
 
     // 3. Fast In-Memory Fan-Out to subscribers with TCP Backpressure check
     this.roomRegistry.broadcastBinary(groupUid, binaryBuffer, socketId);
+    this.relay?.publishBinary(groupUid, binaryBuffer);
   }
 
   /**
@@ -349,8 +367,12 @@ export class PttController {
       speaker: null,
       memberCount,
     };
-    this.roomRegistry.broadcastJson(groupUid, idleFrame);
+    this.broadcastJson(groupUid, idleFrame);
   }
 }
 
-export const pttController = new PttController();
+export const pttController = new PttController(
+  pttRedisRepository,
+  pttRoomRegistry,
+  pttClusterRelay,
+);

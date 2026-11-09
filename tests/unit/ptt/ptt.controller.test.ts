@@ -125,7 +125,7 @@ describe('PttController Unit Tests', () => {
         JSON.stringify({
           type: 'FLOOR_GRANTED',
           requestId: 'req_101',
-          leaseTtlMs: 2000,
+          leaseTtlMs: 5000,
         }),
       );
 
@@ -223,7 +223,7 @@ describe('PttController Unit Tests', () => {
         JSON.stringify({
           type: 'FLOOR_GRANTED',
           requestId: 'req_admin_999',
-          leaseTtlMs: 2000,
+          leaseTtlMs: 5000,
         }),
       );
 
