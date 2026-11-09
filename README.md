@@ -110,10 +110,66 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 ## Paritas dan benchmark
 
 `tools/parity` memutar skenario yang sama ke server TypeScript (acuan) dan Rust, lalu membandingkan status, header kontrak, dan body
-JSON (juga transkrip SSE/WebSocket). Gerbang rilis: 0 beda pada run penuh dengan `KW_NODE_ENV=production`. Perbedaan yang disengaja
-tercatat di `tools/parity/KNOWN_DIFFERENCES.md`. `tools/bench` mengukur throughput, latensi, dan memori kedua server pada data yang sama
-(hasil di `tools/bench/results/`). Keduanya butuh checkout `legacy/typescript` sebagai oracle; cara menyiapkannya ada di
-[`tools/README.md`](tools/README.md).
+JSON (juga transkrip SSE/WebSocket). Gerbang rilis: 0 beda pada run penuh dengan `KW_NODE_ENV=production` (1424 langkah). Perbedaan yang
+disengaja tercatat di `tools/parity/KNOWN_DIFFERENCES.md`. `tools/bench` mengukur throughput, latensi, dan memori kedua server pada data
+yang sama. Keduanya butuh checkout `legacy/typescript` sebagai oracle; cara menyiapkannya ada di [`tools/README.md`](tools/README.md).
+
+### Hasil: TypeScript (Elysia) vs Rust
+
+Apple M1 Pro (10 core, 16 GB), Node 24, MariaDB 12, Redis 8. `oha` closed-loop dengan koneksi keep-alive, 8 sampai 10 detik per run
+setelah warm-up, median 3 run, error 0%. Kedua server memakai MariaDB dan Redis yang sama, pool 10 koneksi, dan data uji sintetis
+(50 ribu tamu, 20 ribu feed, 100 ribu absensi), dijalankan bergantian.
+
+**Throughput (request/detik) dan latensi p99 (ms), TS lawan Rust**
+
+| Skenario | Konkurensi | TypeScript | Rust | Rasio | p99 TS | p99 Rust |
+|---|---|---|---|---|---|---|
+| Daftar tamu | 1 | 841 | 2.055 | 2,4x | 2,39 | 0,74 |
+| | 16 | 1.639 | 9.966 | 6,1x | 13,55 | 2,51 |
+| | 64 | 1.549 | 9.862 | 6,4x | 50,86 | 9,17 |
+| Daftar absensi | 1 | 928 | 1.950 | 2,1x | 2,01 | 0,69 |
+| | 16 | 1.766 | 8.006 | 4,5x | 12,08 | 2,82 |
+| | 64 | 1.647 | 7.935 | 4,8x | 49,24 | 10,97 |
+| Detail insiden | 1 | 1.360 | 3.732 | 2,7x | 1,37 | 0,39 |
+| | 16 | 3.526 | 16.118 | 4,6x | 6,96 | 1,42 |
+| | 64 | 3.373 | 16.082 | 4,8x | 23,84 | 5,21 |
+| Login (RS256) | 1 | 178 | 214 | 1,2x | 7,50 | 5,90 |
+| | 16 | 1.107 | 2.011 | 1,8x | 16,37 | 15,40 |
+| | 64 | 1.110 | 2.071 | 1,9x | 62,95 | 43,70 |
+
+Skenario lain, dari run pertama (Rust sebelum optimasi jalur auth; belum diukur ulang, jadi angka Rust kemungkinan lebih baik sekarang),
+pada konkurensi 64:
+
+| Skenario | TypeScript | Rust | Rasio |
+|---|---|---|---|
+| `GET /health` | 30.337 | 83.045 | 2,7x |
+| `GET /.well-known/jwks.json` | 28.742 | 79.822 | 2,8x |
+| Daftar informasi | 1.449 | 5.412 | 3,7x |
+| Daftar operasional (7 hari) | 359 | 2.012 | 5,6x |
+| Buat insiden | 2.834 | 9.564 | 3,4x |
+
+**Memori dan ukuran**
+
+| | TypeScript | Rust |
+|---|---|---|
+| RSS idle | 56,9 MB | 4,9 MB |
+| RSS puncak saat beban | 160 sampai 430 MB | 7 sampai 48 MB |
+| Artefak deploy | sekitar 375 MB (`dist` + `node_modules`) | 8,4 MB (satu biner) |
+| Waktu start sampai `/health` | 425 ms | 23 ms |
+
+**PTT WebSocket** (1 pembicara, N-1 pendengar, 50 frame/detik, 28 detik): pada 256 klien p99 5,15 ms (TS) lawan 4,25 ms (Rust), tanpa
+frame hilang di keduanya, memori puncak 132 MB lawan 48 MB. Pemakaian CPU Rust justru lebih tinggi pada skenario ini (23% lawan 12%), jadi
+keunggulannya ada di memori, bukan CPU.
+
+**Yang membuat Rust lebih cepat di jalur terautentikasi:** verifikasi JWT RS256 memakai `aws-lc-rs` dengan cache hasil verifikasi sampai
+`exp` (cek `session_ver` ke Redis tetap tiap request), alokator `mimalloc`, dan pool sqlx yang tidak melakukan ping pada tiap acquire.
+Backend RSA murni-Rust yang dipakai pada versi awal justru membuat login dan request terautentikasi lebih lambat dari TypeScript.
+
+**Cara membaca angka ini:** ini perbandingan relatif pada satu mesin, bukan angka produksi absolut. Generator beban, server, MariaDB, dan
+Redis berbagi mesin tanpa TLS atau proxy. Beban CPU lain di mesin (IDE, server dev) ikut memengaruhi hasil. Loop tertutup membuat latensi
+terlihat lebih baik saat server jenuh, jadi bandingkan hanya pada konkurensi yang sama. Data lengkap per ulangan, p50/p90/max, CPU, dan
+RSS ada di `tools/bench/results/` (`ts-vs-rust`, `perf-ts-vs-rust-after`, `perf-login-final`), dan cara mengulang ada di
+[`tools/bench/README.md`](tools/bench/README.md).
 
 ## Deploy
 
