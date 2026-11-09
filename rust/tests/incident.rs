@@ -246,7 +246,7 @@ mod auth_and_validation {
             (json!({"title": "t", "glat": "1"}), "/glat:"),
             (
                 json!({"title": "t", "photos": ["a", "b", "c", "d", "e"]}),
-                "/photos: Expected array length less or equal to 4",
+                "/photos: Expected array length to be less or equal to 4",
             ),
             (
                 json!({"title": "t", "photos": ["x".repeat(2049)]}),

@@ -18,7 +18,7 @@ fn validate_photos(errors: &mut ValidationErrors, photos: Option<&[String]>) {
     if photos.len() > MAX_PHOTOS {
         errors.push(
             "photos",
-            format!("Expected array length less or equal to {MAX_PHOTOS}"),
+            format!("Expected array length to be less or equal to {MAX_PHOTOS}"),
         );
     }
     errors.each_length("photos", photos, ..=MAX_PHOTO_URL_LEN);
@@ -89,7 +89,10 @@ impl Validate for ListQuery {
         ] {
             match raw.as_deref().map(numeric) {
                 None => {}
-                Some(None) => errors.push(name, "Expected number"),
+                Some(None) => errors.push(
+                    name,
+                    format!("Property '{name}' should be one of: 'numeric', 'number'"),
+                ),
                 Some(Some(n)) => errors.range(name, n, 0.0..=max),
             }
         }
@@ -314,7 +317,7 @@ mod tests {
         };
         let text = bad.validate().expect_err("invalid").to_string();
         assert!(text.starts_with("/title: Expected string length greater or equal to 1, /glat:"));
-        assert!(text.contains("/photos: Expected array length less or equal to 4"));
+        assert!(text.contains("/photos: Expected array length to be less or equal to 4"));
         assert!(text.contains("/photos/4: Expected string length less or equal to 2048"));
     }
 }
