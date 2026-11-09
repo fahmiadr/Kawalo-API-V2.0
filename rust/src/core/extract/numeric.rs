@@ -27,7 +27,11 @@ impl Numeric {
     }
 
     fn parse(text: &str) -> Self {
-        js_numeric(text).map_or(Self::Invalid, Self::Value)
+        // TypeBox's `numeric` format rejects the empty string although `Number("")` is 0.
+        if text.is_empty() {
+            return Self::Invalid;
+        }
+        js_number(text).map_or(Self::Invalid, Self::Value)
     }
 }
 
@@ -51,11 +55,8 @@ impl<'de> Deserialize<'de> for Numeric {
     }
 }
 
-/// `+text` for a non-empty string as TypeBox's `numeric` format accepts it.
-fn js_numeric(text: &str) -> Option<f64> {
-    if text.is_empty() {
-        return None;
-    }
+/// JavaScript's `Number(text)`; `None` for what it reads as `NaN`. Blank text is 0.
+pub(crate) fn js_number(text: &str) -> Option<f64> {
     let trimmed = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     match trimmed {
         "" => return Some(0.0),
@@ -112,7 +113,7 @@ mod tests {
             ("-1", Some(-1.0)),
             ("Infinity", Some(f64::INFINITY)),
             ("1e400", Some(f64::INFINITY)),
-            ("", None),
+            ("", Some(0.0)),
             ("abc", None),
             ("NaN", None),
             ("inf", None),
@@ -125,7 +126,13 @@ mod tests {
             ("-0x5", None),
             ("1_0", None),
         ] {
-            assert_eq!(js_numeric(text), want, "{text:?}");
+            assert_eq!(js_number(text), want, "{text:?}");
         }
+    }
+
+    #[test]
+    fn an_empty_query_value_is_invalid_but_blank_is_zero() {
+        assert_eq!(Numeric::parse(""), Numeric::Invalid);
+        assert_eq!(Numeric::parse(" "), Numeric::Value(0.0));
     }
 }

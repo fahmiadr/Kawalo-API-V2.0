@@ -57,6 +57,8 @@ export default [
       await create('coordinate "0" and "0.0" are dropped', { ...base, glat: '0', glong: '0.0' }, 'admin_g1', { expect: 201 });
       await create('coordinate not a number is dropped', { ...base, glat: 'abc', glong: '12abc' }, 'admin_g1', { expect: 201 });
       await create('coordinate with spaces is trimmed', { ...base, glat: ' -6.2 ', glong: ' 106.8 ' }, 'admin_g1', { expect: 201 });
+      await create('coordinate in hex, octal and binary notation', { ...base, glat: '0x1A', glong: '0b101' }, 'admin_g1', { expect: 201 });
+      await create('coordinate Infinity is dropped', { ...base, glat: 'Infinity', glong: '-Infinity' }, 'admin_g1', { expect: 201 });
       await create('coordinate scientific notation', { ...base, glat: '1e1', glong: '-1.5E+2' }, 'admin_g1', { expect: 201 });
       await create('values are trimmed and N/A text dropped', { title: '  Judul Spasi  ', text: 'N/A', event_location: '  Taman  ' }, 'admin_g1', { expect: 201 });
       await create('unknown fields are dropped', { ...base, feed_dt: '2000-01-01T00:00:00Z', user_email: 'x@y.z', id: '5' }, 'admin_g1', { expect: 201 });

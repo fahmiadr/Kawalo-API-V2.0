@@ -57,6 +57,9 @@ export default [
       await hs('empty token param falls through to the header', `${WS}/grp-alpha?token=`, { token: 'ptt_guard1', via: 'header' });
       await hs('stale token in header -> 401', `${WS}/grp-alpha`, { token: 'stale_user', via: 'header' });
       await hs('empty group id -> 404', `${WS}/`, { token: 'ptt_guard1' });
+      await hs('trailing slash on the ws path', `${WS}/grp-alpha/`, { token: 'ptt_guard1' });
+      await hs('double trailing slash on the ws path', `${WS}/grp-alpha//`, { token: 'ptt_guard1' });
+      await hs('trailing slash without a token', `${WS}/grp-alpha/`, {});
       await hs('no group segment -> 404', `${WS}`, { token: 'ptt_guard1' });
       await hs('rate-limit headers on the upgrade response', `${WS}/grp-alpha`, { token: 'ptt_guard2' });
       await t.step('plain GET (no Upgrade) on the ws path', { path: `${WS}/grp-alpha`, token: 'ptt_guard1' });

@@ -19,6 +19,8 @@ use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, SecondsFormat, TimeZone,
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
 
+use crate::core::extract::numeric::js_number;
+
 /// WHATWG HTML5 email grammar, also used by `cleanString` to lower-case emails.
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -62,24 +64,6 @@ pub fn clean_boolean(val: Option<&str>) -> Option<bool> {
         "false" | "0" => Some(false),
         _ => None,
     }
-}
-
-/// `Number(text)` for plain decimal text; `None` for what JavaScript reads as `NaN`.
-fn js_number(text: &str) -> Option<f64> {
-    if matches!(text, "Infinity" | "+Infinity") {
-        return Some(f64::INFINITY);
-    }
-    if text == "-Infinity" {
-        return Some(f64::NEG_INFINITY);
-    }
-    // Rust also accepts `inf` and `nan`, which JavaScript does not.
-    if text
-        .bytes()
-        .any(|b| b.is_ascii_alphabetic() && !matches!(b, b'e' | b'E'))
-    {
-        return None;
-    }
-    text.parse::<f64>().ok().filter(|n| !n.is_nan())
 }
 
 /// Finite number from text; `None` for dirty markers, `NaN` and infinities.
@@ -292,6 +276,8 @@ mod tests {
     fn clean_number_rejects_non_finite_and_rust_only_spellings() {
         assert_eq!(clean_number(Some(" 12.5 ")), Some(12.5));
         assert_eq!(clean_number(Some("1e2")), Some(100.0));
+        // `Number()` also reads radix literals.
+        assert_eq!(clean_number(Some("0x1A")), Some(26.0));
         for bad in ["abc", "NaN", "inf", "Infinity", "N/A", ""] {
             assert_eq!(clean_number(Some(bad)), None, "{bad}");
         }

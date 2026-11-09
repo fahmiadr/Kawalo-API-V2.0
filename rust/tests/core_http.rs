@@ -30,6 +30,36 @@ async fn health_reports_liveness_without_dependencies_in_the_payload() {
 }
 
 #[tokio::test]
+async fn one_trailing_slash_is_ignored_and_wrong_methods_carry_no_allow_header() {
+    let app = TestApp::start().await;
+    for (path, want) in [
+        ("/health/", StatusCode::OK),
+        ("/health/?a=1", StatusCode::OK),
+        ("/health/ready/", StatusCode::OK),
+        ("/health//", StatusCode::NOT_FOUND),
+        ("//health", StatusCode::NOT_FOUND),
+        ("/", StatusCode::NOT_FOUND),
+    ] {
+        let (status, _, _) = app.call_full("GET", path, None, None, "127.0.0.1:1").await;
+        assert_eq!(status, want, "{path}");
+    }
+    let (status, headers, body) = app
+        .call_full("POST", "/health", None, None, "127.0.0.1:1")
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!headers.contains_key("allow"), "{headers:?}");
+}
+
+#[tokio::test]
+async fn options_requests_get_no_request_id() {
+    let app = TestApp::start().await;
+    let (_, headers, _) = app
+        .call_full("OPTIONS", "/health", None, None, "127.0.0.1:1")
+        .await;
+    assert!(!headers.contains_key("x-request-id"), "{headers:?}");
+}
+
+#[tokio::test]
 async fn ready_checks_database_and_redis() {
     let app = TestApp::start().await;
     let (status, body) = app.call("GET", "/health/ready", None, None).await;
