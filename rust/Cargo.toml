@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-axum = { version = "0.8.9", features = ["ws", "macros"] }
+axum = { version = "0.8.9", features = ["ws", "macros", "multipart"] }
 base64 = "0.23.1"
 bytes = "1.12.1"
 chrono = "0.4.45"
@@ -30,7 +30,7 @@ sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "json", "macros"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
-tower = "0.5.3"
+tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

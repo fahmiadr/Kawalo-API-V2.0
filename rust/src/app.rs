@@ -6,11 +6,13 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::get;
+use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::core::constants::default_api_prefix;
 use crate::core::middleware::cors::{self, Origins};
 use crate::core::middleware::fallback::{not_found, panic_response};
+use crate::core::middleware::path::{strip_allow, trim_trailing_slash};
 use crate::core::middleware::rate_limit::{self, RateLimitState, RateLimiter};
 use crate::core::middleware::request_log::request_log;
 use crate::core::middleware::security_headers::security_headers;
@@ -54,7 +56,7 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
     };
     let origins = Arc::new(Origins::parse(&state.config.cors_origin));
 
-    Router::new()
+    let app = Router::new()
         .route("/health", get(health::live))
         .route("/health/ready", get(health::ready))
         .route("/.well-known/jwks.json", get(jwks::jwks))
@@ -69,5 +71,14 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .layer(from_fn(security_headers))
         .layer(from_fn_with_state(origins, cors::cors))
         .layer(from_fn_with_state(state.clone(), request_log))
-        .with_state(state)
+        .with_state(state);
+
+    // Routing happens before any layer and axum adds `allow` after them, so both fixes wrap the
+    // whole router.
+    Router::new().fallback_service(
+        ServiceBuilder::new()
+            .map_request(trim_trailing_slash)
+            .map_response(strip_allow)
+            .service(app),
+    )
 }

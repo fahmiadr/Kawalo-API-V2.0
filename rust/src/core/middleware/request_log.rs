@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use axum::extract::{Request, State};
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, Method};
 use axum::middleware::Next;
 use axum::response::Response;
 use uuid::Uuid;
@@ -19,7 +19,12 @@ pub struct RequestId(pub String);
 
 /// Takes `x-request-id` from the request or mints a UUID, echoes it on the response, and logs one
 /// line per request (status >= 500 as error, >= 400 as warning). `/health` is not logged.
+/// `OPTIONS` requests pass untouched: the CORS plugin answers them before the TypeScript logger runs,
+/// so they get no id and no log line.
 pub async fn request_log(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+    if req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
     let started = Instant::now();
     let request_id = req
         .headers()
