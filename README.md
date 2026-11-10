@@ -107,7 +107,7 @@ src/
   bin/rotate_key.rs  Rotasi kunci RSA
   core/              Lintas fitur: config, db, redis, error (ApiError), response (envelope), security (RSA, token,
                      session version), middleware (CORS, rate limit, request log), extract (auth, json, query), pagination, clean
-  features/<nama>/   auth | group | guest | information | attendance | operational | incident | ptt | uploads
+  features/<nama>/   auth | group | guest | information | attendance | operational | schedule | incident | ptt | uploads
 prisma/              schema.prisma + migrations/ (sumber kebenaran skema)
 scripts/             dev-services.sh (MariaDB + Redis scratch), seed.sql
 tests/               Integrasi per fitur (+ interop/ untuk skrip TS pembanding)
@@ -158,6 +158,7 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 | information | `/information`: GET, POST, PUT, PATCH, DELETE (tunggal dan batch) |
 | attendance | `GET /attendance` (read-only) |
 | operational | `GET /operational` (read-only) |
+| schedule | `GET /schedules/me?from=YYYY-MM-DD&to=YYYY-MM-DD` (jadwal shift milik sendiri; default hari ini + 30 hari, maks 62 hari; tidak ada di versi TypeScript) |
 | incident | `/incidents`: `GET /`, `POST /`, `GET /:id`, `GET /:id/stream` (SSE), `POST /:id/replies`, `PATCH /:id/resolve`, `DELETE /:id` |
 | ptt | WebSocket `/ws/ptt/:groupUid` (di luar `/api/v1`) |
 | uploads | `POST /uploads` (multipart, perlu token); `GET /uploads/{yyyy}/{mm}/{uuid}.{ext}` publik, di luar `/api/v1` |

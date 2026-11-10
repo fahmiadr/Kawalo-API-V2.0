@@ -9,6 +9,7 @@ pub mod incident;
 pub mod information;
 pub mod operational;
 pub mod ptt;
+pub mod schedule;
 pub mod uploads;
 
 mod batch;
