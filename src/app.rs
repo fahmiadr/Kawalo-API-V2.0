@@ -44,6 +44,7 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .merge(features::guest::router())
         .merge(features::operational::router())
         .merge(features::attendance::router())
+        .merge(features::schedule::router())
         .merge(features::information::router())
         .merge(features::incident::router())
         .merge(features::uploads::router());
