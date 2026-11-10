@@ -17,9 +17,9 @@ use crate::core::ids::generate_prefixed_uuid_v7;
 use crate::core::pagination::{PaginationParams, resolve_pagination};
 use crate::core::response::{ApiResult, created, ok};
 use crate::core::state::AppState;
+use crate::features::batch::{DeleteBatchBody, DeleteBatchResult};
 use crate::features::information::dto::{
-    CreateBody, DeleteBatchBody, DeleteBatchResult, FeedType, InformationItem, ListQuery,
-    MAX_PHOTOS, UpdateBody, check_numeric_id,
+    CreateBody, FeedType, InformationItem, ListQuery, MAX_PHOTOS, UpdateBody,
 };
 use crate::features::information::repository::{self, FeedUpdate, ListFilter, NewFeed};
 
@@ -43,7 +43,7 @@ fn path_id(id: Result<Path<String>, PathRejection>) -> Result<String, ApiError> 
         .map(|Path(id)| id)
         .map_err(|rejection| ApiError::invalid_input(rejection.body_text()))?;
     let mut errors = ValidationErrors::new();
-    check_numeric_id(&mut errors, "id", &id);
+    errors.digits("id", &id);
     errors
         .into_result()
         .map_err(|errors| ApiError::invalid_input(errors.to_string()))?;

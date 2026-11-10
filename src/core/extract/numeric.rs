@@ -89,9 +89,54 @@ pub(crate) fn js_number(text: &str) -> Option<f64> {
     trimmed.parse::<f64>().ok().filter(|n| !n.is_nan())
 }
 
+/// JavaScript's `String(n)`: plain digits for magnitudes in `1e-6..1e21`, exponent form beyond.
+pub(crate) fn js_number_to_string(n: f64) -> String {
+    if n == 0.0 {
+        return "0".to_owned();
+    }
+    if n.is_nan() {
+        return "NaN".to_owned();
+    }
+    if n.is_infinite() {
+        return if n < 0.0 { "-Infinity" } else { "Infinity" }.to_owned();
+    }
+    if (1e-6..1e21).contains(&n.abs()) {
+        // Rust's shortest round-trip digits never use an exponent.
+        return n.to_string();
+    }
+    let scientific = format!("{n:e}");
+    match scientific.split_once('e') {
+        Some((mantissa, exponent)) if !exponent.starts_with('-') => {
+            format!("{mantissa}e+{exponent}")
+        }
+        _ => scientific,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_numbers_like_javascript() {
+        for (n, want) in [
+            (5.0, "5"),
+            (-2.0, "-2"),
+            (1.5, "1.5"),
+            (0.0, "0"),
+            (-0.0, "0"),
+            (1e21, "1e+21"),
+            (1.5e300, "1.5e+300"),
+            (1e20, "100000000000000000000"),
+            (123_456_789_012_345_680_000.0, "123456789012345680000"),
+            (0.000001, "0.000001"),
+            (1e-7, "1e-7"),
+            (-1.25e-9, "-1.25e-9"),
+            (12_345_678_901_234_567_890.0, "12345678901234567000"),
+        ] {
+            assert_eq!(js_number_to_string(n), want, "{n:e}");
+        }
+    }
 
     #[test]
     fn follows_javascript_number_rules() {

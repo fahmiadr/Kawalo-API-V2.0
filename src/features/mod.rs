@@ -10,4 +10,8 @@ pub mod information;
 pub mod operational;
 pub mod ptt;
 
+mod batch;
 mod period_query;
+
+#[cfg(test)]
+mod typebox_corpus;

@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use crate::core::constants::AUTH_TOKEN_TYPE;
 use crate::core::error::{ApiError, ErrorCode};
 use crate::core::extract::json::ValidatedJson;
-use crate::core::extract::validate::Validate;
+use crate::core::extract::schema::Body;
 use crate::core::security::verify_access_token;
 use crate::core::state::AppState;
 
@@ -228,7 +228,7 @@ pub struct AuthedJson<T>(pub Auth, pub T);
 
 impl<T> FromRequest<AppState> for AuthedJson<T>
 where
-    T: serde::de::DeserializeOwned + Validate + Send,
+    T: Body + Send,
 {
     type Rejection = ApiError;
 

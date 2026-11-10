@@ -1,5 +1,3 @@
-﻿Γùç injected env (9) from .env.dev // tip: Γùê secrets for agents [www.dotenvx.com]
-Γùç injected env (0) from .env // tip: Γîÿ multiple files { path: ['.env.local', '.env'] }
 -- CreateTable
 CREATE TABLE `chatconversations` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

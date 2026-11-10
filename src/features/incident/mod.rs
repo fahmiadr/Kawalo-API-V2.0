@@ -1,7 +1,7 @@
 //! Incident reports with realtime reply threads (`/incidents`), ported from `src/features/incident` on `legacy/typescript`.
 
 mod bus;
-mod dto;
+pub(super) mod dto;
 mod event;
 mod handlers;
 mod repository;

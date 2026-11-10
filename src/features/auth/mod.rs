@@ -1,6 +1,6 @@
 //! `/auth`: login, refresh, group switch and logout. The JWKS endpoint lives in `core::security`.
 
-mod dto;
+pub(super) mod dto;
 mod handlers;
 mod login_limiter;
 mod password_check;

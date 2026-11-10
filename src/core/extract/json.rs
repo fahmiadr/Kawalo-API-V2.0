@@ -3,13 +3,13 @@
 use axum::extract::{FromRequest, Multipart, Request};
 use axum::http::{StatusCode, header};
 use bytes::Bytes;
-use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::core::error::{ApiError, ErrorCode};
-use crate::core::extract::validate::{Validate, describe_path_error};
+use crate::core::extract::schema::{Body, FILE_PART_KEY};
 
-/// Deserialises and validates a request body. Unknown fields are ignored, as Elysia strips them.
+/// Validates a request body against [`Body::SCHEMA`] and deserialises it. Unknown fields are
+/// ignored, as Elysia strips them.
 ///
 /// The body is parsed by content type exactly like Elysia's default parser: JSON, URL-encoded
 /// forms (repeated keys become arrays, every value is text) and multipart forms become an object
@@ -18,7 +18,7 @@ use crate::core::extract::validate::{Validate, describe_path_error};
 ///
 /// Failures match the TypeScript server:
 /// * malformed or empty JSON, or a broken multipart body: 400 `BAD_REQUEST`
-/// * schema mismatch, failed [`Validate`], or no body: 422 `VALIDATION_ERROR`
+/// * schema mismatch or no body: 422 `VALIDATION_ERROR` with TypeBox's wording
 ///
 /// ```ignore
 /// async fn create(user: CurrentUser, ValidatedJson(body): ValidatedJson<CreateDto>) -> ApiResult<Out> { .. }
@@ -59,7 +59,7 @@ impl BodyKind {
 impl<S, T> FromRequest<S> for ValidatedJson<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned + Validate,
+    T: Body,
 {
     type Rejection = ApiError;
 
@@ -70,11 +70,11 @@ where
             .and_then(|v| v.to_str().ok());
         let kind = BodyKind::of(content_type);
 
-        let value: T = if kind == BodyKind::Multipart {
+        let value = if kind == BodyKind::Multipart {
             let mut multipart = Multipart::from_request(req, state)
                 .await
                 .map_err(|_| ApiError::malformed_json())?;
-            from_value(multipart_object(&mut multipart).await?)?
+            multipart_object(&mut multipart).await?
         } else {
             let bytes = Bytes::from_request(req, state).await.map_err(|rejection| {
                 let status = rejection.status();
@@ -85,40 +85,28 @@ where
                 }
             })?;
             match kind {
-                BodyKind::Json => from_json(&bytes)?,
-                BodyKind::UrlEncoded => from_value(form_object(&bytes))?,
-                BodyKind::Opaque | BodyKind::Multipart => from_value(Value::Object(Map::new()))?,
-                BodyKind::Absent => return Err(ApiError::invalid_input(": Expected object")),
+                BodyKind::Json => parse_json(&bytes)?,
+                BodyKind::UrlEncoded => form_object(&bytes),
+                BodyKind::Opaque | BodyKind::Multipart => Value::Object(Map::new()),
+                BodyKind::Absent => Value::Null,
             }
         };
 
-        value
-            .validate()
-            .map_err(|errors| ApiError::invalid_input(errors.to_string()))?;
-        Ok(Self(value))
+        T::parse(value).map(Self).map_err(ApiError::invalid_input)
     }
 }
 
-fn from_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiError> {
+fn parse_json(bytes: &[u8]) -> Result<Value, ApiError> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Err(ApiError::malformed_json());
     }
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let value: T = serde_path_to_error::deserialize(&mut deserializer).map_err(|err| {
+    serde_json::from_slice(bytes).map_err(|err| {
         use serde_json::error::Category;
-        match err.inner().classify() {
+        match err.classify() {
+            Category::Data => ApiError::invalid_input(err.to_string()),
             Category::Syntax | Category::Eof | Category::Io => ApiError::malformed_json(),
-            Category::Data => ApiError::invalid_input(describe_path_error(&err)),
         }
-    })?;
-    // `from_slice` stops at the end of the first value; trailing garbage is malformed JSON.
-    deserializer.end().map_err(|_| ApiError::malformed_json())?;
-    Ok(value)
-}
-
-fn from_value<T: DeserializeOwned>(value: Value) -> Result<T, ApiError> {
-    serde_path_to_error::deserialize(value)
-        .map_err(|err| ApiError::invalid_input(describe_path_error(&err)))
+    })
 }
 
 /// Groups repeated keys into arrays; a single value stays as it is.
@@ -161,7 +149,10 @@ async fn multipart_object(multipart: &mut Multipart) -> Result<Value, ApiError> 
             continue;
         };
         let value = if field.file_name().is_some() {
-            Value::Object(Map::new())
+            Value::Object(Map::from_iter([(
+                FILE_PART_KEY.to_owned(),
+                Value::Bool(true),
+            )]))
         } else {
             Value::String(field.text().await.map_err(|_| ApiError::malformed_json())?)
         };
@@ -182,6 +173,7 @@ async fn multipart_object(multipart: &mut Multipart) -> Result<Value, ApiError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::extract::schema::{Field, Kind, NO_LIMIT, Schema};
     use axum::body::Body;
     use http_body_util::BodyExt;
     use serde::Deserialize;
@@ -193,12 +185,11 @@ mod tests {
         note: Option<String>,
     }
 
-    impl Validate for Dto {
-        fn validate(&self) -> Result<(), crate::core::extract::ValidationErrors> {
-            let mut errors = crate::core::extract::ValidationErrors::new();
-            errors.email("email", &self.email);
-            errors.into_result()
-        }
+    impl crate::core::extract::Body for Dto {
+        const SCHEMA: Schema = Schema::new(&[
+            Field::required("email", Kind::email(NO_LIMIT)),
+            Field::optional("note", Kind::text(0, NO_LIMIT)),
+        ]);
     }
 
     async fn extract(content_type: Option<&str>, body: &str) -> Result<Dto, (StatusCode, Value)> {
@@ -257,7 +248,10 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(json["error_code"], "VALIDATION_ERROR");
         assert_eq!(json["message"], "Format data masukan tidak valid");
-        assert_eq!(json["details"], "/email: Expected required property");
+        assert_eq!(
+            json["details"],
+            "/email: Expected property 'email' to be string but found: undefined"
+        );
 
         let (_, json) = extract(JSON, r#"{"email":"nope"}"#)
             .await
@@ -265,11 +259,16 @@ mod tests {
         assert_eq!(json["details"], "/email: Property 'email' should be email");
 
         let (_, json) = extract(JSON, r#"{"email":5}"#).await.expect_err("type");
-        assert!(
-            json["details"]
-                .as_str()
-                .expect("details")
-                .starts_with("/email: invalid type")
+        assert_eq!(
+            json["details"],
+            "/email: Expected property 'email' to be string but found: 5"
+        );
+        let (_, json) = extract(JSON, r#"{"email":"a@b.co","note":null}"#)
+            .await
+            .expect_err("null");
+        assert_eq!(
+            json["details"],
+            "/note: Expected property 'note' to be string but found: null"
         );
 
         let (status, json) = extract(JSON, "null").await.expect_err("null");
@@ -306,7 +305,8 @@ mod tests {
                 .expect_err(ct);
             assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{ct}");
             assert_eq!(
-                json["details"], "/email: Expected required property",
+                json["details"],
+                "/email: Expected property 'email' to be string but found: undefined",
                 "{ct}"
             );
         }
@@ -335,7 +335,10 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(json["error_code"], "VALIDATION_ERROR");
         let (_, json) = extract(FORM, "").await.expect_err("empty");
-        assert_eq!(json["details"], "/email: Expected required property");
+        assert_eq!(
+            json["details"],
+            "/email: Expected property 'email' to be string but found: undefined"
+        );
     }
 
     #[tokio::test]

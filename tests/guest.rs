@@ -167,10 +167,8 @@ fn assert_error(response: &(StatusCode, Value), status: u16, code: &str, message
     assert_eq!(body["message"], message, "{body}");
 }
 
-/// serde's own messages carry a trailing position, so detail text is compared by prefix.
 fn assert_details(body: &Value, expected: &str) {
-    let details = body["details"].as_str().unwrap_or_default();
-    assert!(details.starts_with(expected), "{details:?} vs {expected:?}");
+    assert_eq!(body["details"], expected, "{body}");
 }
 
 fn names(body: &Value) -> Vec<&str> {
@@ -302,19 +300,19 @@ async fn create_validates_and_returns_the_full_guest() {
         ),
         (
             json!({"guest_number": "x".repeat(33)}),
-            "/guest_number: Expected string length less or equal to 32",
+            "/guest_number: Property 'guest_number' should be one of: 'string', 'null'",
         ),
         (
             json!({"guest_identity_type": "BPJS"}),
-            "/guest_identity_type: Expected one of: KTP, SIM, PASPOR, LAINNYA",
+            "/guest_identity_type: Property 'guest_identity_type' should be one of: 'undefined', 'null'",
         ),
         (
             json!({"guest_to_user_email": "bukan-email"}),
-            "/guest_to_user_email: Property 'guest_to_user_email' should be email",
+            "/guest_to_user_email: Property 'guest_to_user_email' should be one of: 'email', 'null'",
         ),
         (
             json!({"guest_type": null}),
-            "/guest_type: invalid type: null, expected a string",
+            "/guest_type: Expected property 'guest_type' to be string but found: null",
         ),
     ] {
         let mut body = base.clone();
@@ -327,7 +325,10 @@ async fn create_validates_and_returns_the_full_guest() {
     }
     let r = post(json!({"guest_destination": "x", "guest_type": "x"})).await;
     assert_eq!(r.0, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(r.1["details"], "/guest_name: Expected required property");
+    assert_eq!(
+        r.1["details"],
+        "/guest_name: Expected property 'guest_name' to be string but found: undefined"
+    );
 
     let r =
         post(json!({"guest_name": "   ", "guest_destination": "B", "guest_type": "Kurir"})).await;
@@ -1106,9 +1107,9 @@ async fn delete_batch_reports_the_count_and_validates_the_list() {
         ),
         (
             json!({"ids": [1]}),
-            "/ids/0: invalid type: integer `1`, expected a string",
+            "/ids/0: Expected property 'ids.0' to be string but found: 1",
         ),
-        (json!({}), "/ids: Expected required property"),
+        (json!({}), "/ids: Expected array"),
     ] {
         let r = app
             .call("DELETE", "/api/v1/guests", Some(&guard), Some(&body))

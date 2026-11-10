@@ -60,8 +60,10 @@ export class Normalizer {
       }
     }
     const { iat, exp, ...rest } = claims;
+    // Identity ignores iat/exp: two logins of one user in the same second yield identical tokens on a fast server
+    // and different ones on a slower one, which is timing and not behaviour.
     return {
-      $jwt: this.#index('jwt', token),
+      $jwt: this.#index('jwt', JSON.stringify([header, rest])),
       sig,
       header,
       claims: {

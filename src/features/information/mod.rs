@@ -1,6 +1,6 @@
 //! Information feed (`tkfeed`): list, create, update (PUT and PATCH) and delete (single and batch).
 
-mod dto;
+pub(super) mod dto;
 mod handlers;
 mod repository;
 

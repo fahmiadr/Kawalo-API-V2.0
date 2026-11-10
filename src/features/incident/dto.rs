@@ -1,26 +1,17 @@
 //! Request schemas (TypeBox limits) and snake_case response items for the Flutter app.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::event::ReplyEntity;
 use super::repository::IncidentRow;
 use crate::core::clean::iso_string;
 use crate::core::constants::MAX_PAGE_SIZE;
+use crate::core::extract::schema::{Body, Field, Kind, NO_LIMIT, Schema};
 use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 const MAX_PHOTOS: usize = 4;
 const MAX_PHOTO_URL_LEN: usize = 2048;
-
-fn validate_photos(errors: &mut ValidationErrors, photos: Option<&[String]>) {
-    let Some(photos) = photos else { return };
-    if photos.len() > MAX_PHOTOS {
-        errors.push(
-            "photos",
-            format!("Expected array length to be less or equal to {MAX_PHOTOS}"),
-        );
-    }
-    errors.each_length("photos", photos, ..=MAX_PHOTO_URL_LEN);
-}
+const PHOTOS: Kind = Kind::list(&Kind::text(0, MAX_PHOTO_URL_LEN), 0, MAX_PHOTOS);
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListQuery {
@@ -42,54 +33,42 @@ impl Validate for ListQuery {
     }
 }
 
-/// An optional field that may be absent but not `null`, unlike the nullable ones.
-fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error> {
-    T::deserialize(deserializer).map(Some)
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CreateIncident {
     pub title: String,
     // Accepted for the app's sake but never used: the group always comes from the token.
-    #[serde(rename = "group_id", default, deserialize_with = "present")]
+    #[serde(rename = "group_id")]
     pub _group_id: Option<String>,
     pub description: Option<String>,
     pub category: Option<String>,
     pub glat: Option<f64>,
     pub glong: Option<f64>,
-    #[serde(default, deserialize_with = "present")]
     pub photos: Option<Vec<String>>,
 }
 
-impl Validate for CreateIncident {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("title", &self.title, 1..=128);
-        errors.opt_length("description", self.description.as_deref(), ..=1024);
-        errors.opt_length("category", self.category.as_deref(), ..=16);
-        errors.opt_range("glat", self.glat, -90.0..=90.0);
-        errors.opt_range("glong", self.glong, -180.0..=180.0);
-        validate_photos(&mut errors, self.photos.as_deref());
-        errors.into_result()
-    }
+impl Body for CreateIncident {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("title", Kind::text(1, 128)),
+        Field::optional("group_id", Kind::text(0, NO_LIMIT)),
+        Field::nullable("description", Kind::text(0, 1024)),
+        Field::nullable("category", Kind::text(0, 16)),
+        Field::nullable("glat", Kind::number(-90.0, 90.0)),
+        Field::nullable("glong", Kind::number(-180.0, 180.0)),
+        Field::optional("photos", PHOTOS),
+    ]);
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PostReply {
     pub message: String,
-    #[serde(default, deserialize_with = "present")]
     pub photos: Option<Vec<String>>,
 }
 
-impl Validate for PostReply {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("message", &self.message, ..=2000);
-        validate_photos(&mut errors, self.photos.as_deref());
-        errors.into_result()
-    }
+impl Body for PostReply {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("message", Kind::text(0, 2000)),
+        Field::optional("photos", PHOTOS),
+    ]);
 }
 
 /// `JSON.stringify` prints whole numbers without a fraction (`5`, not `5.0`).
@@ -237,29 +216,5 @@ mod tests {
         assert_eq!(text(Some(-6.2)), "-6.2");
         assert_eq!(text(Some(-0.0)), "0");
         assert_eq!(text(None), "null");
-    }
-
-    #[test]
-    fn create_limits_follow_the_schema() {
-        let ok = CreateIncident {
-            title: "t".into(),
-            _group_id: None,
-            description: None,
-            category: None,
-            glat: Some(90.0),
-            glong: Some(-180.0),
-            photos: Some(vec!["a".into(); 4]),
-        };
-        assert!(ok.validate().is_ok());
-        let bad = CreateIncident {
-            title: String::new(),
-            glat: Some(91.0),
-            photos: Some(vec!["x".repeat(2049); 5]),
-            ..ok
-        };
-        let text = bad.validate().expect_err("invalid").to_string();
-        assert!(text.starts_with("/title: Expected string length greater or equal to 1, /glat:"));
-        assert!(text.contains("/photos: Expected array length to be less or equal to 4"));
-        assert!(text.contains("/photos/4: Expected string length less or equal to 2048"));
     }
 }

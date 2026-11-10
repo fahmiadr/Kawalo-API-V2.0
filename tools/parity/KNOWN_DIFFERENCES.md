@@ -1,8 +1,8 @@
 # Known differences between the TypeScript and Rust servers
 
-State at the last full parity run: `KW_NODE_ENV=production` (the hard requirement), 1420 steps, 0 differences, stable over
-repeated runs; `KW_NODE_ENV=development` has the differences listed under "Development mode `details`" and none otherwise
-(`run --ignore-details` is 0 differences). Everything below is a decision, not an open bug.
+State at the last full parity run: 1427 steps, 0 differences with `KW_NODE_ENV=production` (the hard requirement) and
+0 differences with `KW_NODE_ENV=development`, where the 422 `details` text is compared too (see "Development mode
+`details`"). Everything below is a decision, not an open bug.
 
 ## Not replicated on purpose (TS defects)
 
@@ -37,22 +37,33 @@ repeated runs; `KW_NODE_ENV=development` has the differences listed under "Devel
   the first range violation is reported alone with an empty path (`: Expected number to be less or equal to 100`).
 * `Number()` is also what `cleanNumber`/`cleanCoordinate` use, so `0x1A` is a valid stored coordinate.
 
-## Development mode `details` (not implemented)
+## Development mode `details`
 
-In `NODE_ENV=production` 422 bodies have no `details`. In development TS prints TypeBox's own error list; Rust prints
-serde-derived text, which differs for most body errors (113 of 1419 steps). Query-string errors are already exact.
-Grammar of the TS text, should someone want to close the gap (it needs a per-DTO schema description, because the text
-depends on nullability and on *all* failing properties, in schema order, not just the first):
+In `NODE_ENV=production` 422 bodies have no `details`. In development TS prints TypeBox's own error list and Rust
+reproduces it: every request body type declares a `Schema` (`src/core/extract/schema.rs`, one `impl Body` per DTO) that
+is walked the way TypeBox walks its schema, so the text, the order and the set of listed errors match. Query strings and
+path parameters use `Validate` (`validate.rs`) with the same wording. The rules, all probed against the real server:
 
-* wrong or missing string: `/title: Expected property 'title' to be string but found: undefined` (the found value is
-  JavaScript `String(value)`: `5`, `null`, `a,b` for arrays, `[object Object]`, `[object File]`); nested paths use dots
-  in the property name and slashes in the pointer (`/photos/0: Expected property 'photos.0' ...`)
-* a nullable field (`t.Nullable`) answers every failure of its value, including length, format and range, with
-  `/glat: Property 'glat' should be one of: 'number', 'null'`; nullable email `'email', 'null'`; a nullable enum
-  `'undefined', 'null'`
-* required object missing: `: Expected object`; wrong array: `/photos: Expected array`,
-  `/photos: Expected array length to be less or equal to 4`
-* non-nullable length/format: `/title: Expected string length greater or equal to 1`, `Property 'email' should be email`
+* Errors come in schema order, not body order, and at most 64 are listed.
+* `null` (or no body) is `: Expected object`; any other non-object counts as an object without properties, so it fails on
+  the first required field and is simply accepted when every field is optional (`POST /auth/logout` with `"text"`,
+  `5` or `[]`). A schema with a `default:` (information create) turns a missing or `null` body into `{}`.
+* A required field that is absent fails like one of the wrong type, `found: undefined`:
+  `/title: Expected property 'title' to be string but found: undefined`. The found value is JavaScript `String(value)`
+  (`5`, `1e+21`, `a,2,,3,4` for arrays, `[object Object]`, `[object File]` for a multipart file part). Nested paths use
+  dots in the property name and slashes in the pointer (`/photos/0: Expected property 'photos.0' ...`).
+* A nullable field (`t.Nullable`) answers every violation of its value, length, format, range and enum alike, with one
+  `/glat: Property 'glat' should be one of: 'number', 'null'` (`'string'`, `'email'`, and `'undefined'` for an enum).
+* Arrays: `/photos: Expected array`, then `Expected array length to be greater or equal to 1` / `less or equal to 4`, then
+  one error per bad item.
+
+`tests/fixtures/typebox_details.json` holds about 1200 bodies recorded from the real server by
+`tools/parity/typebox-corpus.mts` (every property with wrong types, limits, several failures at once, root values);
+`src/features/typebox_corpus.rs` replays them and also checks that every accepted body deserialises into its DTO. Add a
+body type to the generator when adding a DTO, and regenerate the fixture after changing a schema.
+
+Known gap: a non-nullable union of literals is rendered from TypeBox's source (`'undefined'` per literal) instead of
+a probe, because no DTO has one.
 
 ## Approximations
 
@@ -65,6 +76,10 @@ depends on nullability and on *all* failing properties, in schema order, not jus
   a few seconds after Redis returns (a short outage recovers in about 150 ms). ioredis in TS reconnects within a
   second. Both answer the same 503 envelope while it is down.
 * Database outage: both answer the same 500 envelope, the TS driver after about 10 s, Rust after 5 s (pool acquire timeout).
+* Harness: JWT placeholders are numbered by claims and header, not by the token string. Two logins of one user in the same
+  wall-clock second yield identical tokens, and Rust spends tens of ms more per login on Argon2id, so a second boundary used
+  to fall between the two servers now and then and produce a `$jwt: A=n B=m` difference (about 1 run in 4). `iat` and `exp`
+  are no longer part of the identity; the claims, header and signature check are still compared.
 * `x-request-id`, `date`, JWT signatures and the exact `retry-after` second are random or clock based; the harness checks
   presence/echo and a 3 second tolerance instead of equality.
 
@@ -76,7 +91,7 @@ depends on nullability and on *all* failing properties, in schema order, not jus
 | `date`, `content-length`, `connection`, `keep-alive`, `transfer-encoding` ignored | `IGNORED_NAMES` | every step |
 | Generated ids, near-now timestamps, JWT claims normalised to placeholders | `lib/normalize.mjs` | every step |
 | WebSocket 101 headers reduced to `Upgrade` and the subprotocol echo | `Server.ws` | PTT handshakes |
-| `details` dropped from error bodies | `run --ignore-details` | opt-in, only for the development-mode run |
+| `details` dropped from error bodies | `run --ignore-details` | opt-in, no longer needed |
 | SSE heartbeat recorded as "a ping arrived 13-17.5 s after the retry hint" | `heartbeat` | incident/sse |
 
 Run `run.mjs` without flags and with `KW_NODE_ENV=production` for the gate that must be 0.

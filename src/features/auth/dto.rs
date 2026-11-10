@@ -1,31 +1,23 @@
 //! Request bodies and response data of the auth endpoints.
 
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
-use crate::core::extract::{Validate, ValidationErrors};
+use crate::core::extract::schema::{Body, Field, Kind, NO_LIMIT, Schema};
 use crate::features::auth::user::User;
-
-/// `t.Optional(t.String())` accepts a missing key but not `null`.
-fn string_not_null<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    String::deserialize(deserializer).map(Some)
-}
 
 #[derive(Debug, Deserialize)]
 pub struct LoginBody {
     pub email: String,
     pub password: String,
-    #[serde(default, deserialize_with = "string_not_null")]
     pub group_uid: Option<String>,
 }
 
-impl Validate for LoginBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.email("email", &self.email);
-        errors.length("password", &self.password, 1..);
-        errors.into_result()
-    }
+impl Body for LoginBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("email", Kind::email(NO_LIMIT)),
+        Field::required("password", Kind::text(1, NO_LIMIT)),
+        Field::optional("group_uid", Kind::text(0, NO_LIMIT)),
+    ]);
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,12 +25,9 @@ pub struct RefreshBody {
     pub refresh_token: String,
 }
 
-impl Validate for RefreshBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("refresh_token", &self.refresh_token, 1..);
-        errors.into_result()
-    }
+impl Body for RefreshBody {
+    const SCHEMA: Schema =
+        Schema::new(&[Field::required("refresh_token", Kind::text(1, NO_LIMIT))]);
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,40 +35,19 @@ pub struct SwitchGroupBody {
     pub group_uid: String,
 }
 
-impl Validate for SwitchGroupBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("group_uid", &self.group_uid, 1..);
-        errors.into_result()
-    }
+impl Body for SwitchGroupBody {
+    const SCHEMA: Schema = Schema::new(&[Field::required("group_uid", Kind::text(1, NO_LIMIT))]);
 }
 
-/// TypeBox lets any array through `t.Object` when every property is optional, so `[]` is a valid
-/// logout body; other non-objects are rejected.
 #[derive(Debug, Deserialize)]
-#[serde(try_from = "Value")]
 pub struct LogoutBody {
     pub refresh_token: Option<String>,
 }
 
-impl TryFrom<Value> for LogoutBody {
-    type Error = String;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let refresh_token = match value {
-            Value::Array(_) => None,
-            Value::Object(mut map) => match map.remove("refresh_token") {
-                None => None,
-                Some(Value::String(token)) => Some(token),
-                Some(_) => return Err("refresh_token: Expected string".to_owned()),
-            },
-            _ => return Err("Expected object".to_owned()),
-        };
-        Ok(Self { refresh_token })
-    }
+impl Body for LogoutBody {
+    const SCHEMA: Schema =
+        Schema::new(&[Field::optional("refresh_token", Kind::text(0, NO_LIMIT))]);
 }
-
-impl Validate for LogoutBody {}
 
 /// The access/refresh token pair returned to the client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

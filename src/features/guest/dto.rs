@@ -3,41 +3,24 @@
 use axum::extract::rejection::PathRejection;
 use axum::extract::{FromRequestParts, Path};
 use axum::http::request::Parts;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::core::clean::Patch;
 use crate::core::constants::MAX_PAGE_SIZE;
 use crate::core::error::ApiError;
+use crate::core::extract::schema::{Body, Field, Kind, NO_LIMIT, Schema};
 use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 const IDENTITY_TYPES: [&str; 4] = ["KTP", "SIM", "PASPOR", "LAINNYA"];
 const ID_PATTERN: &str = "^[a-zA-Z0-9_-]+$";
 /// Path segment of the static master-types route.
 const MASTER_TYPES_ID: &str = "master-types";
-const NUMERIC_PATTERN: &str = "^[0-9]+$";
-
-/// A field that may be omitted but not `null` (TypeBox `t.Optional(t.String())`); `Option`
-/// alone would accept `null`.
-fn not_null<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    String::deserialize(deserializer).map(Some)
-}
 
 fn is_id(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-
-fn is_numeric(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit())
-}
-
-fn set_value(patch: &Patch<String>) -> Option<&str> {
-    match patch {
-        Patch::Set(value) => Some(value),
-        Patch::Missing | Patch::Clear => None,
-    }
 }
 
 /// `:id` path parameter (numeric `GuestId` or `QRUID`). Elysia validates params before the auth
@@ -118,37 +101,27 @@ pub struct CreateGuestBody {
     pub guest_dt: Option<String>,
 }
 
-impl Validate for CreateGuestBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("guest_name", &self.guest_name, 1..=128);
-        errors.length("guest_destination", &self.guest_destination, 1..=128);
-        errors.opt_length("guest_purpose", self.guest_purpose.as_deref(), ..=128);
-        errors.opt_length("guest_number", self.guest_number.as_deref(), ..=32);
-        errors.opt_length("guest_identity", self.guest_identity.as_deref(), ..=64);
-        if let Some(kind) = &self.guest_identity_type {
-            errors.one_of("guest_identity_type", kind, &IDENTITY_TYPES);
-        }
-        errors.length("guest_type", &self.guest_type, 1..=64);
-        errors.opt_length("guest_address", self.guest_address.as_deref(), ..=512);
-        errors.opt_length(
-            "guest_to_user_email",
-            self.guest_to_user_email.as_deref(),
-            ..=128,
-        );
-        errors.opt_email("guest_to_user_email", self.guest_to_user_email.as_deref());
-        errors.opt_length("guest_photo", self.guest_photo.as_deref(), ..=2048);
-        errors.into_result()
-    }
+impl Body for CreateGuestBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("guest_name", Kind::text(1, 128)),
+        Field::required("guest_destination", Kind::text(1, 128)),
+        Field::nullable("guest_purpose", Kind::text(0, 128)),
+        Field::nullable("guest_number", Kind::text(0, 32)),
+        Field::nullable("guest_identity", Kind::text(0, 64)),
+        Field::nullable("guest_identity_type", Kind::OneOf(&IDENTITY_TYPES)),
+        Field::required("guest_type", Kind::text(1, 64)),
+        Field::nullable("guest_address", Kind::text(0, 512)),
+        Field::nullable("guest_to_user_email", Kind::email(128)),
+        Field::nullable("guest_photo", Kind::text(0, 2048)),
+        Field::nullable("guest_dt", Kind::text(0, NO_LIMIT)),
+    ]);
 }
 
 /// Body of PUT and PATCH. Fields required on create cannot be cleared, so they are plain
 /// `Option`s; the rest are tri-state.
 #[derive(Debug, Deserialize)]
 pub struct UpdateGuestBody {
-    #[serde(default, deserialize_with = "not_null")]
     pub guest_name: Option<String>,
-    #[serde(default, deserialize_with = "not_null")]
     pub guest_destination: Option<String>,
     #[serde(default)]
     pub guest_purpose: Patch<String>,
@@ -158,7 +131,6 @@ pub struct UpdateGuestBody {
     pub guest_identity: Patch<String>,
     #[serde(default)]
     pub guest_identity_type: Patch<String>,
-    #[serde(default, deserialize_with = "not_null")]
     pub guest_type: Option<String>,
     #[serde(default)]
     pub guest_address: Patch<String>,
@@ -168,29 +140,19 @@ pub struct UpdateGuestBody {
     pub guest_photo: Patch<String>,
 }
 
-impl Validate for UpdateGuestBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.opt_length("guest_name", self.guest_name.as_deref(), 1..=128);
-        errors.opt_length(
-            "guest_destination",
-            self.guest_destination.as_deref(),
-            1..=128,
-        );
-        errors.opt_length("guest_purpose", set_value(&self.guest_purpose), ..=128);
-        errors.opt_length("guest_number", set_value(&self.guest_number), ..=32);
-        errors.opt_length("guest_identity", set_value(&self.guest_identity), ..=64);
-        if let Some(kind) = set_value(&self.guest_identity_type) {
-            errors.one_of("guest_identity_type", kind, &IDENTITY_TYPES);
-        }
-        errors.opt_length("guest_type", self.guest_type.as_deref(), 1..=64);
-        errors.opt_length("guest_address", set_value(&self.guest_address), ..=512);
-        let email = set_value(&self.guest_to_user_email);
-        errors.opt_length("guest_to_user_email", email, ..=128);
-        errors.opt_email("guest_to_user_email", email);
-        errors.opt_length("guest_photo", set_value(&self.guest_photo), ..=2048);
-        errors.into_result()
-    }
+impl Body for UpdateGuestBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::optional("guest_name", Kind::text(1, 128)),
+        Field::optional("guest_destination", Kind::text(1, 128)),
+        Field::nullable("guest_purpose", Kind::text(0, 128)),
+        Field::nullable("guest_number", Kind::text(0, 32)),
+        Field::nullable("guest_identity", Kind::text(0, 64)),
+        Field::nullable("guest_identity_type", Kind::OneOf(&IDENTITY_TYPES)),
+        Field::optional("guest_type", Kind::text(1, 64)),
+        Field::nullable("guest_address", Kind::text(0, 512)),
+        Field::nullable("guest_to_user_email", Kind::email(128)),
+        Field::nullable("guest_photo", Kind::text(0, 2048)),
+    ]);
 }
 
 /// Body of acknowledge and checkout: an optional QR code that takes precedence over the path id.
@@ -199,40 +161,8 @@ pub struct QrBody {
     pub qr_uid: Option<String>,
 }
 
-impl Validate for QrBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.opt_length("qr_uid", self.qr_uid.as_deref(), ..=64);
-        errors.into_result()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeleteBatchBody {
-    pub ids: Vec<String>,
-}
-
-impl Validate for DeleteBatchBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        if self.ids.is_empty() {
-            errors.push("ids", "Expected array length to be greater or equal to 1");
-        }
-        for (index, id) in self.ids.iter().enumerate() {
-            if !is_numeric(id) {
-                errors.push(
-                    &format!("ids/{index}"),
-                    format!("Expected string to match '{NUMERIC_PATTERN}'"),
-                );
-            }
-        }
-        errors.into_result()
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct DeleteBatchResult {
-    pub deleted_count: u64,
+impl Body for QrBody {
+    const SCHEMA: Schema = Schema::new(&[Field::nullable("qr_uid", Kind::text(0, 64))]);
 }
 
 #[derive(Debug, Serialize)]
@@ -262,48 +192,9 @@ mod tests {
     }
 
     #[test]
-    fn required_update_fields_reject_null() {
-        for field in ["guest_name", "guest_destination", "guest_type"] {
-            assert!(update(json!({ field: null })).is_err(), "{field}");
-        }
-    }
-
-    #[test]
-    fn update_body_enforces_limits_and_formats() {
-        let body = update(json!({
-            "guest_name": "",
-            "guest_number": "x".repeat(33),
-            "guest_identity_type": "BPJS",
-            "guest_to_user_email": "bukan-email",
-        }))
-        .expect("body");
-        assert_eq!(
-            body.validate().expect_err("invalid").to_string(),
-            "/guest_name: Expected string length greater or equal to 1, \
-             /guest_number: Expected string length less or equal to 32, \
-             /guest_identity_type: Expected one of: KTP, SIM, PASPOR, LAINNYA, \
-             /guest_to_user_email: Property 'guest_to_user_email' should be email"
-        );
-    }
-
-    #[test]
-    fn id_and_numeric_patterns() {
+    fn id_pattern() {
         assert!(is_id("a1_-B") && is_id("123"));
         assert!(!is_id("") && !is_id("a b") && !is_id("a/b") && !is_id("a\n"));
-        assert!(is_numeric("007") && !is_numeric("1a") && !is_numeric(""));
-    }
-
-    #[test]
-    fn batch_body_requires_numeric_ids() {
-        let body = DeleteBatchBody {
-            ids: vec!["1".into(), "x".into()],
-        };
-        assert_eq!(
-            body.validate().expect_err("invalid").to_string(),
-            "/ids/1: Expected string to match '^[0-9]+$'"
-        );
-        let empty = DeleteBatchBody { ids: vec![] };
-        assert!(empty.validate().is_err());
     }
 
     #[test]

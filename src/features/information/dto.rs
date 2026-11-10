@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::clean::Patch;
 use crate::core::constants::MAX_PAGE_SIZE;
+use crate::core::extract::schema::{Body, Field, Kind, Schema};
 use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 const TITLE_MAX: usize = 128;
@@ -23,6 +24,9 @@ pub enum FeedType {
     Event,
     Other,
 }
+
+const FEED_TYPES: [&str; 5] = ["GENERAL", "JOIN", "INCIDENT", "EVENT", "OTHER"];
+const PHOTOS: Kind = Kind::list(&Kind::text(0, URL_MAX), 0, MAX_PHOTOS);
 
 impl FeedType {
     pub fn as_str(self) -> &'static str {
@@ -71,22 +75,19 @@ pub struct CreateBody {
     pub glong: Option<String>,
 }
 
-impl Validate for CreateBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        errors.length("title", &self.title, 1..=TITLE_MAX);
-        errors.opt_length("text", self.text.as_deref(), ..=TEXT_MAX);
-        errors.opt_length("feed_file", self.feed_file.as_deref(), ..=URL_MAX);
-        validate_photos(&mut errors, &self.photos);
-        errors.opt_length(
-            "event_location",
-            self.event_location.as_deref(),
-            ..=LOCATION_MAX,
-        );
-        errors.opt_length("glat", self.glat.as_deref(), ..=COORDINATE_MAX);
-        errors.opt_length("glong", self.glong.as_deref(), ..=COORDINATE_MAX);
-        errors.into_result()
-    }
+impl Body for CreateBody {
+    // `feed_type` has a TypeBox default, which makes Elysia treat a missing body as `{}`.
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("title", Kind::text(1, TITLE_MAX)),
+        Field::nullable("text", Kind::text(0, TEXT_MAX)),
+        Field::nullable("feed_file", Kind::text(0, URL_MAX)),
+        Field::optional("photos", PHOTOS),
+        Field::nullable("feed_type", Kind::OneOf(&FEED_TYPES)),
+        Field::nullable("event_location", Kind::text(0, LOCATION_MAX)),
+        Field::nullable("glat", Kind::text(0, COORDINATE_MAX)),
+        Field::nullable("glong", Kind::text(0, COORDINATE_MAX)),
+    ])
+    .with_defaults();
 }
 
 /// Shared by PUT and PATCH. Every field is tri-state: absent leaves the column alone.
@@ -110,75 +111,17 @@ pub struct UpdateBody {
     pub glong: Patch<String>,
 }
 
-impl Validate for UpdateBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        patch_length(&mut errors, "title", &self.title, 1..=TITLE_MAX);
-        patch_length(&mut errors, "text", &self.text, ..=TEXT_MAX);
-        patch_length(&mut errors, "feed_file", &self.feed_file, ..=URL_MAX);
-        validate_photos(&mut errors, &self.photos);
-        patch_length(
-            &mut errors,
-            "event_location",
-            &self.event_location,
-            ..=LOCATION_MAX,
-        );
-        patch_length(&mut errors, "glat", &self.glat, ..=COORDINATE_MAX);
-        patch_length(&mut errors, "glong", &self.glong, ..=COORDINATE_MAX);
-        errors.into_result()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeleteBatchBody {
-    pub ids: Vec<String>,
-}
-
-impl Validate for DeleteBatchBody {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        let mut errors = ValidationErrors::new();
-        if self.ids.is_empty() {
-            errors.push("ids", "Expected array length to be greater or equal to 1");
-        }
-        for (index, id) in self.ids.iter().enumerate() {
-            check_numeric_id(&mut errors, &format!("ids/{index}"), id);
-        }
-        errors.into_result()
-    }
-}
-
-/// `^[0-9]+$`, the pattern of every `FeedId` in a path or body.
-pub fn check_numeric_id(errors: &mut ValidationErrors, path: &str, id: &str) {
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
-        errors.push(path, "Expected string to match '^[0-9]+$'");
-    }
-}
-
-fn patch_length(
-    errors: &mut ValidationErrors,
-    path: &str,
-    value: &Patch<String>,
-    bounds: impl std::ops::RangeBounds<usize>,
-) {
-    if let Patch::Set(text) = value {
-        errors.length(path, text, bounds);
-    }
-}
-
-fn validate_photos(errors: &mut ValidationErrors, photos: &Patch<Vec<String>>) {
-    match photos {
-        Patch::Missing => {}
-        Patch::Clear => errors.push("photos", "Expected array"),
-        Patch::Set(items) => {
-            if items.len() > MAX_PHOTOS {
-                errors.push(
-                    "photos",
-                    format!("Expected array length to be less or equal to {MAX_PHOTOS}"),
-                );
-            }
-            errors.each_length("photos", items, ..=URL_MAX);
-        }
-    }
+impl Body for UpdateBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::nullable("title", Kind::text(1, TITLE_MAX)),
+        Field::nullable("text", Kind::text(0, TEXT_MAX)),
+        Field::nullable("feed_file", Kind::text(0, URL_MAX)),
+        Field::optional("photos", PHOTOS),
+        Field::nullable("feed_type", Kind::OneOf(&FEED_TYPES)),
+        Field::nullable("event_location", Kind::text(0, LOCATION_MAX)),
+        Field::nullable("glat", Kind::text(0, COORDINATE_MAX)),
+        Field::nullable("glong", Kind::text(0, COORDINATE_MAX)),
+    ]);
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -200,9 +143,4 @@ pub struct InformationItem {
     pub event_duration: Option<i32>,
     pub glat: Option<String>,
     pub glong: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct DeleteBatchResult {
-    pub deleted_count: u64,
 }
