@@ -12,10 +12,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /app kawalo
 WORKDIR /app
+# Uploaded files are persisted here; mount a volume in production (the image itself is disposable).
+RUN mkdir -p /app/uploads && chown kawalo /app/uploads
 COPY --from=build /app/target/release/kawalo-api /app/target/release/rotate_key /usr/local/bin/
 # certs/ (RSA keys) is mounted at runtime, never baked into the image:
 #   docker run -v "$PWD/certs:/app/certs" --env-file .env.prod ...
-ENV TZ=Asia/Jakarta NODE_ENV=production PORT=3000
+ENV TZ=Asia/Jakarta NODE_ENV=production PORT=3000 UPLOAD_DIR=/app/uploads
+VOLUME /app/uploads
 USER kawalo
 EXPOSE 3000
 CMD ["kawalo-api"]

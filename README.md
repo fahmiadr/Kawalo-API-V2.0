@@ -107,7 +107,7 @@ src/
   bin/rotate_key.rs  Rotasi kunci RSA
   core/              Lintas fitur: config, db, redis, error (ApiError), response (envelope), security (RSA, token,
                      session version), middleware (CORS, rate limit, request log), extract (auth, json, query), pagination, clean
-  features/<nama>/   auth | group | guest | information | attendance | operational | incident | ptt
+  features/<nama>/   auth | group | guest | information | attendance | operational | incident | ptt | uploads
 prisma/              schema.prisma + migrations/ (sumber kebenaran skema)
 scripts/             dev-services.sh (MariaDB + Redis scratch), seed.sql
 tests/               Integrasi per fitur (+ interop/ untuk skrip TS pembanding)
@@ -141,6 +141,8 @@ Dimuat dari `.env.dev|staging|prod` (sesuai `NODE_ENV`) lalu `.env` di working d
 | `CORS_ORIGIN` | `*` | |
 | `RATE_LIMIT_MAX` / `RATE_LIMIT_DURATION` | `100` / `60000` | Rate limit global per IP; durasi dalam ms |
 | `TRUSTED_PROXY_CIDRS` | loopback + jaringan privat | Daftar CIDR proxy yang dipercaya untuk `X-Forwarded-For` |
+| `UPLOAD_DIR` | `./uploads` | Akar penyimpanan unggahan; di produksi harus volume persisten |
+| `PUBLIC_BASE_URL` | kosong | Origin URL unggahan tanpa slash akhir (mis. `https://api.contoh.id`). Kosong: diturunkan dari header `Host` dengan skema `http` (hanya untuk dev) |
 | `LOGIN_RATE_LIMIT_IP_MAX`, `LOGIN_RATE_LIMIT_DURATION`, `LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_DURATION` | `10`, `900`, `5`, `900` | Throttling login (detik) |
 
 ## Endpoint ringkas
@@ -158,6 +160,28 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 | operational | `GET /operational` (read-only) |
 | incident | `/incidents`: `GET /`, `POST /`, `GET /:id`, `GET /:id/stream` (SSE), `POST /:id/replies`, `PATCH /:id/resolve`, `DELETE /:id` |
 | ptt | WebSocket `/ws/ptt/:groupUid` (di luar `/api/v1`) |
+| uploads | `POST /uploads` (multipart, perlu token); `GET /uploads/{yyyy}/{mm}/{uuid}.{ext}` publik, di luar `/api/v1` |
+
+### Unggah berkas (`uploads`)
+
+Fitur baru, tidak ada di versi TypeScript. `POST /api/v1/uploads`, `multipart/form-data`, semua peran. Field `file` (wajib) dan `kind`
+(`image` atau `document`, wajib). Sukses `201`:
+
+```json
+{"success":true,"message":"Berkas berhasil diunggah","data":{"url":"https://api.contoh.id/uploads/2026/11/<uuid v4>.webp","kind":"image","size":48213,"content_type":"image/webp","name":"foto.webp"}}
+```
+
+`name` hanya untuk tampilan (nama asli yang sudah disanitasi); nama simpan selalu UUID v4 acak dengan ekstensi hasil deteksi isi.
+
+* **Gambar**: harus WebP sungguhan (header `RIFF`/`WEBP`, ukuran RIFF konsisten, chunk pertama VP8/VP8L/VP8X); content-type dan ekstensi dari klien diabaikan.
+  Ukuran maksimal 150.000 byte (di bawah 150 KB); kompresi (WebP, kualitas 90-100) dikerjakan aplikasi, server hanya memvalidasi.
+* **Dokumen**: ekstensi `pdf`, `doc`, `docx`, `xls`, `xlsx`, `txt` (ekstensi dari nama berkas) dan isinya harus cocok (`%PDF-`, zip `PK`, OLE, UTF-8 tanpa NUL). Maksimal 10 MB.
+* Galat memakai envelope standar: tipe salah, isi tidak cocok, field hilang, atau bukan multipart `422 VALIDATION_ERROR`; terlalu besar `413 BAD_REQUEST`
+  ("Ukuran gambar maksimal 150 KB." / "Ukuran dokumen maksimal 10 MB."); tanpa/dengan token tidak valid `401`; lebih dari 30 unggahan per pengguna per menit
+  `429 RATE_LIMIT_EXCEEDED` dengan `Retry-After` (selain rate limit IP global).
+* `GET /uploads/{yyyy}/{mm}/{uuid}.{ext}` publik (URL tak bisa ditebak), mendukung `HEAD`, `Cache-Control: public, max-age=31536000, immutable`,
+  `Content-Disposition: inline` untuk gambar dan `attachment` untuk dokumen. Path selain pola yang dikenal menghasilkan `404`. Tanpa dukungan `Range`.
+* Tidak ada metadata di database dan tidak ada migrasi. Berkas yatim (diunggah tetapi tidak pernah dirujuk) tidak dibersihkan otomatis (di luar cakupan).
 
 ## Paritas dan benchmark
 
@@ -236,4 +260,5 @@ RSS ada di `tools/bench/results/` (`ts-vs-rust`, `perf-ts-vs-rust-after`, `perf-
 * **Zona waktu**: set `TZ` secara eksplisit (mis. `Asia/Jakarta`, zona data operasional). Fitur `operational` mengelompokkan dan memformat waktu menurut zona proses, sehingga hasilnya berbeda bila `TZ` berbeda.
 * `TRUSTED_PROXY_CIDRS` harus mencakup proxy produksi; bila tidak, `X-Forwarded-For` diabaikan dan rate limit serta log memandang semua klien sebagai satu IP.
 * Jalankan migrasi (`npm run prisma:migrate:deploy`) sebelum merilis versi yang membutuhkannya. Migrasi `tkincident*` harus sudah ada di tiap database, kalau tidak endpoint `/incidents` mengembalikan 500; begitu pula `20261110000000_add_user_password_hash` (kolom `tkuser.PasswordHash`), kalau tidak login mengembalikan 500.
+* **Unggahan**: `UPLOAD_DIR` harus volume persisten (di Docker: `/app/uploads`, dimiliki user `kawalo`), dicadangkan, dan dipantau kuotanya; berkas tidak pernah dihapus otomatis. Set `PUBLIC_BASE_URL` ke origin publik (https); bila kosong URL mengikuti header `Host`. Bila ada beberapa instance, semuanya harus berbagi volume yang sama.
 * Liveness `GET /health`, readiness `GET /health/ready`. Pada `SIGTERM`/`SIGINT` server menutup koneksi dengan tenggang 10 detik.

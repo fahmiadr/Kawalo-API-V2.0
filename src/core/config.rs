@@ -1,7 +1,7 @@
 //! Environment configuration, ported from `env.config.ts` and `auth.config.ts`.
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
@@ -9,6 +9,8 @@ use crate::core::clean::parse_int_prefix;
 
 const DEFAULT_TRUSTED_PROXY_CIDRS: &str =
     "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16";
+
+const DEFAULT_UPLOAD_DIR: &str = "./uploads";
 
 /// Settings for the authentication domain (`AuthConfig` in the TypeScript code).
 #[derive(Debug, Clone)]
@@ -71,6 +73,11 @@ pub struct Config {
     /// Fixed window length in milliseconds.
     pub rate_limit_duration: u64,
     pub trusted_proxy_cidrs: Vec<String>,
+    /// Root of the stored uploads; must be a persistent volume in production.
+    pub upload_dir: PathBuf,
+    /// Origin of the URLs handed out for uploads, without a trailing slash. Empty derives it from
+    /// the request `Host` header (development only).
+    pub public_base_url: String,
     pub auth: AuthConfig,
 }
 
@@ -102,6 +109,11 @@ impl Config {
             rate_limit_max: env_uint("RATE_LIMIT_MAX", 100),
             rate_limit_duration: env_uint("RATE_LIMIT_DURATION", 60_000),
             trusted_proxy_cidrs: env_list("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS),
+            upload_dir: PathBuf::from(env_string("UPLOAD_DIR", DEFAULT_UPLOAD_DIR)),
+            public_base_url: env_string("PUBLIC_BASE_URL", "")
+                .trim()
+                .trim_end_matches('/')
+                .to_owned(),
             auth: AuthConfig::from_env(),
             node_env,
         }
@@ -151,6 +163,8 @@ impl std::fmt::Debug for Config {
             .field("rate_limit_max", &self.rate_limit_max)
             .field("rate_limit_duration", &self.rate_limit_duration)
             .field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs)
+            .field("upload_dir", &self.upload_dir)
+            .field("public_base_url", &self.public_base_url)
             .field("auth", &self.auth)
             .finish()
     }
@@ -171,6 +185,8 @@ impl Default for Config {
             rate_limit_max: 100,
             rate_limit_duration: 60_000,
             trusted_proxy_cidrs: split_csv(DEFAULT_TRUSTED_PROXY_CIDRS),
+            upload_dir: PathBuf::from(DEFAULT_UPLOAD_DIR),
+            public_base_url: String::new(),
             auth: AuthConfig::default(),
         }
     }

@@ -14,3 +14,4 @@ README.md
 !.env.example
 certs
 data.sql
+/uploads

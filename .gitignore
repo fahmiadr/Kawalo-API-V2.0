@@ -16,6 +16,9 @@ node_modules
 certs/
 data.sql
 
+# Uploaded files
+/uploads/
+
 # Logs
 logs/
 *.log

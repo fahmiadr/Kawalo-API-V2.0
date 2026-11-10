@@ -45,7 +45,8 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .merge(features::operational::router())
         .merge(features::attendance::router())
         .merge(features::information::router())
-        .merge(features::incident::router());
+        .merge(features::incident::router())
+        .merge(features::uploads::router());
 
     let limiter = RateLimitState {
         limiter: Arc::new(RateLimiter::new(
@@ -61,6 +62,7 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .route("/health/ready", get(health::ready))
         .route("/.well-known/jwks.json", get(jwks::jwks))
         .merge(features::ptt::ws_router())
+        .merge(features::uploads::files_router())
         .merge(extra)
         .nest(&default_api_prefix(), v1)
         .fallback(not_found)
