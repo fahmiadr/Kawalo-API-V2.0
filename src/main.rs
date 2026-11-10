@@ -38,6 +38,13 @@ async fn main() -> anyhow::Result<()> {
     keys.enable_file_watcher()
         .context("watching the certs directory")?;
 
+    tracing::info!("[Uploads] storing files in {}", config.upload_dir.display());
+    if config.is_production() && config.public_base_url.is_empty() {
+        tracing::warn!(
+            "[Uploads] PUBLIC_BASE_URL is unset; upload URLs will follow the Host header"
+        );
+    }
+
     let pool = db::connect(&config)
         .await
         .context("connecting to MariaDB")?;

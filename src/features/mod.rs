@@ -1,5 +1,5 @@
 //! Feature modules. Each exposes `router()` mounted under `/api/v1`, except `ptt`, whose
-//! `ws_router()` lives at the root.
+//! `ws_router()` lives at the root, as does the public file router of `uploads`.
 
 pub mod attendance;
 pub mod auth;
@@ -9,6 +9,7 @@ pub mod incident;
 pub mod information;
 pub mod operational;
 pub mod ptt;
+pub mod uploads;
 
 mod batch;
 mod period_query;
