@@ -402,7 +402,7 @@ impl RsaKeyManager {
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                 if let Ok(event) = event
-                    && event.paths.iter().any(|p| is_key_file(p))
+                    && is_key_change(&event)
                 {
                     // The receiver only disappears while shutting down.
                     let _ = tx.send(());
@@ -653,6 +653,16 @@ fn is_key_file(path: &Path) -> bool {
         })
 }
 
+/// Whether a watcher event means a key file was created, modified or removed.
+///
+/// `Access` events (open, read, close-after-read) are ignored on purpose: inotify reports them on
+/// Linux, and `reload()` itself reads `public.key` and `active_kid.txt`, so reacting to them makes
+/// every reload trigger the next one forever. FSEvents on macOS never emits them.
+fn is_key_change(event: &notify::Event) -> bool {
+    !matches!(event.kind, notify::EventKind::Access(_))
+        && event.paths.iter().any(|p| is_key_file(p))
+}
+
 fn push_unique(list: &mut Vec<String>, kid: String) {
     if !list.contains(&kid) {
         list.push(kid);
@@ -745,6 +755,44 @@ mod tests {
 
     fn manager(dir: &Path) -> RsaKeyManager {
         RsaKeyManager::init_with_modulus(dir, TEST_BITS).expect("init")
+    }
+
+    fn event(kind: notify::EventKind, path: &str) -> notify::Event {
+        notify::Event::new(kind).add_path(PathBuf::from(path))
+    }
+
+    #[test]
+    fn watcher_ignores_reads_of_key_files() {
+        use notify::EventKind;
+        use notify::event::{AccessKind, AccessMode};
+
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+        ] {
+            assert!(!is_key_change(&event(kind, "certs/public.key")));
+            assert!(!is_key_change(&event(kind, "certs/active_kid.txt")));
+        }
+    }
+
+    #[test]
+    fn watcher_reacts_to_writes_of_key_files_only() {
+        use notify::EventKind;
+        use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind};
+
+        let modified = EventKind::Modify(ModifyKind::Data(DataChange::Any));
+        assert!(is_key_change(&event(modified, "certs/active_kid.txt")));
+        assert!(is_key_change(&event(modified, "certs/public.key")));
+        assert!(is_key_change(&event(
+            EventKind::Create(CreateKind::File),
+            "certs/archived/kawalo-key-1.pub.pem"
+        )));
+        assert!(is_key_change(&event(
+            EventKind::Remove(RemoveKind::File),
+            "certs/archived/kawalo-key-1.pub.pem"
+        )));
+        assert!(!is_key_change(&event(modified, "certs/private.key")));
     }
 
     #[test]
