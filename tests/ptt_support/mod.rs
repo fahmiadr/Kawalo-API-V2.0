@@ -225,3 +225,32 @@ pub fn opus(n: u32, len: usize) -> Vec<u8> {
     frame.extend((0..len).map(|i| u8::try_from((n as usize * 31 + i) % 256).expect("byte")));
     frame
 }
+
+/// A token like [`custom_token`] with an explicit `allow_admin`, for role-versus-flag checks.
+pub async fn flagged_token(
+    app: &TestApp,
+    sub: &str,
+    role: &str,
+    group: &str,
+    allow_admin: bool,
+) -> String {
+    let session_ver = app
+        .state
+        .sessions
+        .get_or_init_version(sub)
+        .await
+        .expect("session version");
+    let payload = JwtUserPayload {
+        sub: Some(sub.to_owned()),
+        email: Some(sub.to_owned()),
+        name: Some(sub.to_owned()),
+        role: Some(role.to_owned()),
+        group_uid: Some(group.to_owned()),
+        allow_admin,
+        session_ver,
+        ..JwtUserPayload::default()
+    };
+    sign_access_token(&app.state.keys, app.state.config.jwt_expires_in, &payload)
+        .expect("sign")
+        .token
+}

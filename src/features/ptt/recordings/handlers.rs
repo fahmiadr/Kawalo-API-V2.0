@@ -71,19 +71,17 @@ pub async fn list(
     )
 }
 
-/// Same rules as the incident delete: the active group first, then `allow_admin`, then a
-/// missing or already deleted row is a 404.
+/// The active group first, then the token role (not `allow_admin`: real data has guards with that
+/// flag set), then a missing or already deleted row is a 404.
 pub async fn remove(
     id: RecordingId,
     user: CurrentUser,
     State(state): State<AppState>,
 ) -> ApiResult<()> {
     let group_uid = user.require_group_uid()?;
-    if !user.allow_admin {
-        return Err(
-            ApiError::forbidden().with_message("Hanya administrator yang dapat menghapus rekaman.")
-        );
-    }
+    user.require_role(&["ADMIN", "SUPER_ADMIN"]).map_err(|_| {
+        ApiError::forbidden().with_message("Hanya administrator yang dapat menghapus rekaman.")
+    })?;
     let row = repository::find(&state.db, &id.0, group_uid)
         .await?
         .ok_or_else(not_found)?;

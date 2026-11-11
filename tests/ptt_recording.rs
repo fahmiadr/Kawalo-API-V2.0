@@ -784,6 +784,40 @@ mod deleting {
     }
 
     #[tokio::test]
+    async fn the_role_decides_not_the_allow_admin_flag() {
+        let rig = Rig::new().await;
+        let (id, url, file) = seeded(&rig).await;
+        let flagged_guard = flagged_token(
+            &rig.app,
+            &format!("flag-{}@kawalo.test", rig.squad.tag),
+            "GUARD",
+            rig.group(),
+            true,
+        )
+        .await;
+        let (status, json) = rig
+            .app
+            .call("DELETE", &url, Some(&flagged_guard), None)
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{json}");
+        assert_eq!(json["message"], FORBIDDEN);
+        assert!(rig.deleted_at(&id).await.is_none());
+        assert!(file.exists());
+
+        let super_admin = flagged_token(
+            &rig.app,
+            &format!("super-{}@kawalo.test", rig.squad.tag),
+            "super_admin",
+            rig.group(),
+            false,
+        )
+        .await;
+        let (status, json) = rig.app.call("DELETE", &url, Some(&super_admin), None).await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        assert!(rig.deleted_at(&id).await.is_some());
+    }
+
+    #[tokio::test]
     async fn an_admin_of_another_group_cannot_delete_it() {
         let rig = Rig::new().await;
         let (id, url, file) = seeded(&rig).await;
