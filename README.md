@@ -143,6 +143,7 @@ Dimuat dari `.env.dev|staging|prod` (sesuai `NODE_ENV`) lalu `.env` di working d
 | `TRUSTED_PROXY_CIDRS` | loopback + jaringan privat | Daftar CIDR proxy yang dipercaya untuk `X-Forwarded-For` |
 | `UPLOAD_DIR` | `./uploads` | Akar penyimpanan unggahan; di produksi harus volume persisten |
 | `PUBLIC_BASE_URL` | kosong | Origin URL unggahan tanpa slash akhir (mis. `https://api.contoh.id`). Kosong: diturunkan dari header `Host` dengan skema `http` (hanya untuk dev) |
+| `PTT_RECORDING_ENABLED` | `false` | Merekam setiap giliran bicara PTT ke `UPLOAD_DIR/ptt` dan tabel `tkpttrecording`. Mati secara default karena menyimpan suara asli; daftar, putar, dan hapus rekaman yang sudah ada tetap jalan saat mati. Dicatat sekali saat start (`[PTT] recording enabled/disabled`) |
 | `LOGIN_RATE_LIMIT_IP_MAX`, `LOGIN_RATE_LIMIT_DURATION`, `LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_DURATION` | `10`, `900`, `5`, `900` | Throttling login (detik) |
 
 ## Endpoint ringkas
@@ -161,7 +162,40 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 | schedule | `GET /schedules/me?from=YYYY-MM-DD&to=YYYY-MM-DD` (jadwal shift milik sendiri; default hari ini + 30 hari, maks 62 hari; tidak ada di versi TypeScript) |
 | incident | `/incidents`: `GET /`, `POST /`, `GET /:id`, `GET /:id/stream` (SSE), `POST /:id/replies`, `PATCH /:id/resolve`, `DELETE /:id` |
 | ptt | WebSocket `/ws/ptt/:groupUid` (di luar `/api/v1`) |
+| ptt recordings | `/ptt/recordings`: `GET /?limit=&before=`, `GET /:id/audio`, `DELETE /:id` (hanya `allow_admin`) |
 | uploads | `POST /uploads` (multipart, perlu token); `GET /uploads/{yyyy}/{mm}/{uuid}.{ext}` publik, di luar `/api/v1` |
+
+### Riwayat rekaman PTT (`ptt/recordings`)
+
+Fitur baru, tidak ada di versi TypeScript. Dengan `PTT_RECORDING_ENABLED=true`, tiap giliran bicara (dari lantai diberikan sampai dilepas, dicabut/diambil alih admin,
+`TOT_DURATION` 30 detik habis, atau soket pembicara putus) direkam di instance yang memegang soket pembicara: payload 640 byte (PCM 16 kHz mono 16-bit, 20 ms) di-encode
+ke Opus (VoIP, 24 kbps) dan dikemas Ogg/Opus; payload dengan panjang lain dianggap sudah Opus dan dikemas apa adanya. Berkas ditulis atomik ke
+`UPLOAD_DIR/ptt/{yyyy}/{mm}/{uuid}.opus` (di luar rute publik `/uploads`), lalu satu baris `tkpttrecording` (migrasi `20261111010000_add_ptt_recording`).
+Giliran tanpa audio tidak disimpan. Jalur relay tidak berubah: frame masuk ke kanal terbatas lewat `try_send` dan dibuang (dicatat) bila penuh. Dengan flag mati, perilaku
+sama persis seperti sebelumnya dan tidak ada perekam yang dibuat.
+
+Semua endpoint memakai `Authorization: Bearer` (termasuk audio, jadi pemutar harus mengirim header itu), dibatasi ke `group_uid` token, dan mengabaikan baris yang sudah dihapus.
+Peran `ADMIN`, `GUARD`, dan `USER` boleh melihat dan memutar. `SUPER_ADMIN` tidak lintas grup di sini (sama seperti fitur REST lain: grup aktif dari token).
+
+* `GET /api/v1/ptt/recordings?limit=&before=`: terbaru dulu. `limit` 1 sampai 100 (default 20), `before` = kursor buram dari `next_before`; nilai tidak valid `422 VALIDATION_ERROR`.
+  Token tanpa grup aktif `400`; tanpa token `401`.
+
+  ```json
+  {"success":true,"message":"Riwayat rekaman PTT berhasil diambil","data":{
+    "items":[{"id":"rec_<uuid v7>","speaker":{"id":"<sub token>","name":"Budi","role":"GUARD","email":"budi@contoh.id"},
+              "started_at":"2026-11-11T08:15:30.120Z","duration_ms":4820,"size_bytes":10432,
+              "audio_path":"/api/v1/ptt/recordings/rec_<uuid v7>/audio"}],
+    "next_before":"<kursor>"}}
+  ```
+
+  `next_before` berisi kursor untuk halaman yang lebih lama, atau `null` bila itu halaman terakhir. Urutan `started_at` lalu `id` menurun; waktu mulai = saat lantai diberikan.
+* `GET /api/v1/ptt/recordings/{id}/audio`: berkas Ogg/Opus, `Content-Type: audio/ogg`, `Accept-Ranges: bytes`, `Cache-Control: private`. Mendukung satu `Range: bytes=a-b|a-|-n`
+  (`206` dengan `Content-Range`; `416` dengan `Content-Range: bytes */total` bila di luar berkas; header Range lain diabaikan dan berkas utuh dikirim). Rekaman grup lain, yang tidak ada, sudah
+  dihapus, atau yang berkasnya hilang `404 RESOURCE_NOT_FOUND` ("Rekaman tidak ditemukan."); tanpa token `401`. Berkas dicari hanya dari baris DB dan jalurnya harus tetap di bawah `UPLOAD_DIR`.
+* `DELETE /api/v1/ptt/recordings/{id}`: hanya `allow_admin` (aturan yang sama dengan `DELETE /incidents/:id`). Urutan cek: grup aktif (`400`), bukan admin `403 AUTH_FORBIDDEN`
+  ("Hanya administrator yang dapat menghapus rekaman."), tidak ada/grup lain/sudah dihapus `404` (jadi hapus kedua `404`), tanpa token `401`. Sukses `200`
+  `{"success":true,"message":"Rekaman berhasil dihapus","data":null}`: mengisi `DeletedAt` (baris tetap sebagai nisan) lalu menghapus berkas dengan upaya terbaik (gagal hanya dicatat `warn`).
+  Berjalan juga saat `PTT_RECORDING_ENABLED=false`. Tidak ada hapus massal, pemulihan, retensi otomatis, atau kuota disk.
 
 ### Unggah berkas (`uploads`)
 
