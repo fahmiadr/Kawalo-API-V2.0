@@ -9,7 +9,7 @@ use kawalo_api::core::security::{JwtUserPayload, sign_access_token};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const GUEST_KEYS: [&str; 22] = [
+const GUEST_KEYS: [&str; 23] = [
     "id",
     "group_name",
     "guest_name",
@@ -24,6 +24,7 @@ const GUEST_KEYS: [&str; 22] = [
     "guest_destination",
     "guest_to_user_email",
     "guest_to_user_name",
+    "guest_to_name",
     "guest_creator_email",
     "guest_creator_name",
     "guest_category",
@@ -1223,4 +1224,87 @@ async fn numeric_query_values_follow_javascript_number() {
             "{query}"
         );
     }
+}
+
+#[tokio::test]
+async fn free_text_host_name_is_stored_updated_cleared_and_searchable() {
+    let app = TestApp::start().await;
+    let t = Tenant::new(&app).await;
+    let guard = t.token(&app, &t.guard).await;
+    let base = json!({
+        "guest_name": "Tamu Nama",
+        "guest_destination": "Blok A",
+        "guest_type": t.guest_type.0,
+    });
+    let call = |method: &'static str, path: String, body: Value| {
+        let (app, guard) = (&app, &guard);
+        async move { app.call(method, &path, Some(guard), Some(&body)).await }
+    };
+
+    // Old contract (neither field) still works and yields null.
+    let (status, resp) = call("POST", "/api/v1/guests".into(), base.clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    assert_eq!(resp["data"]["guest_to_name"], Value::Null);
+    assert_eq!(resp["data"]["guest_to_user_email"], Value::Null);
+
+    // Name only: no member lookup, trimmed.
+    let mut body = base.clone();
+    body["guest_to_name"] = json!("  Pak Haji Slamet ");
+    let (status, resp) = call("POST", "/api/v1/guests".into(), body).await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let data = &resp["data"];
+    assert_eq!(data["guest_to_name"], "Pak Haji Slamet");
+    assert_eq!(data["guest_to_user_email"], Value::Null);
+    assert_eq!(data["guest_to_user_name"], Value::Null);
+    let id = data["id"].as_str().expect("id").to_owned();
+    let path = format!("/api/v1/guests/{id}");
+
+    let (_, found) = app
+        .call("GET", "/api/v1/guests?search=Slamet", Some(&guard), None)
+        .await;
+    assert_eq!(names(&found), ["Tamu Nama"]);
+    let (_, one) = app.call("GET", &path, Some(&guard), None).await;
+    assert_eq!(one["data"]["guest_to_name"], "Pak Haji Slamet");
+
+    // Both fields: email is still validated against group members.
+    let mut body = base.clone();
+    body["guest_to_name"] = json!("Budi");
+    body["guest_to_user_email"] = json!("orang.asing@t.id");
+    let r = call("POST", "/api/v1/guests".into(), body).await;
+    assert_error(
+        &r,
+        400,
+        "VALIDATION_ERROR",
+        "Penghuni yang dituju tidak terdaftar pada grup aktif.",
+    );
+
+    for method in ["PUT", "PATCH"] {
+        let (status, resp) = call(
+            method,
+            path.clone(),
+            json!({"guest_to_name": "Bu Ani", "guest_to_user_email": t.host}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{method}: {resp}");
+        assert_eq!(resp["data"]["guest_to_name"], "Bu Ani");
+        assert_eq!(resp["data"]["guest_to_user_email"], t.host.as_str());
+
+        let (_, resp) = call(method, path.clone(), json!({"guest_name": "Tamu Nama"})).await;
+        assert_eq!(
+            resp["data"]["guest_to_name"], "Bu Ani",
+            "absent field stays"
+        );
+
+        let (_, resp) = call(method, path.clone(), json!({"guest_to_name": "  "})).await;
+        assert_eq!(resp["data"]["guest_to_name"], Value::Null, "blank clears");
+        let (_, resp) = call(method, path.clone(), json!({"guest_to_name": "Lagi"})).await;
+        assert_eq!(resp["data"]["guest_to_name"], "Lagi");
+        let (_, resp) = call(method, path.clone(), json!({"guest_to_name": null})).await;
+        assert_eq!(resp["data"]["guest_to_name"], Value::Null, "null clears");
+    }
+
+    let mut body = base.clone();
+    body["guest_to_name"] = json!("x".repeat(129));
+    let r = call("POST", "/api/v1/guests".into(), body).await;
+    assert_eq!(r.0, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.1);
 }

@@ -24,9 +24,9 @@ const GUEST_SELECT: &str = "SELECT `tkguest`.`GuestId`, `tkguest`.`GuestUID`, \
     `tkguest`.`GuestPurpose`, `tkguest`.`GuestDestination`, `tkguest`.`GuestToUserEmail`, \
     `tkguest`.`GuestCreatorEmail`, `tkguest`.`GuestCreatorName`, `tkguest`.`GuestCategory`, \
     `tkguest`.`QRUID`, `tkguest`.`GuestAddress`, `tkguest`.`GuestType`, \
-    `tkguest`.`GuestCheckOutByEmail` FROM `tkguest`";
+    `tkguest`.`GuestCheckOutByEmail`, `tkguest`.`GuestToName` FROM `tkguest`";
 
-const SEARCH_COLUMNS: [&str; 14] = [
+const SEARCH_COLUMNS: [&str; 15] = [
     "GuestName",
     "GuestNumber",
     "GuestIdentityType",
@@ -37,6 +37,7 @@ const SEARCH_COLUMNS: [&str; 14] = [
     "GuestPurpose",
     "GuestDestination",
     "GuestToUserEmail",
+    "GuestToName",
     "GuestCreatorEmail",
     "GuestCreatorName",
     "GuestCheckOutByEmail",
@@ -118,6 +119,8 @@ struct GuestRow {
     guest_type: Option<String>,
     #[sqlx(rename = "GuestCheckOutByEmail")]
     checkout_by_email: Option<String>,
+    #[sqlx(rename = "GuestToName")]
+    to_name: Option<String>,
 }
 
 /// A guest as returned by the API, after the legacy-data sanitising of the anti-corruption
@@ -138,6 +141,7 @@ pub struct GuestItem {
     pub guest_destination: Option<String>,
     pub guest_to_user_email: Option<String>,
     pub guest_to_user_name: Option<String>,
+    pub guest_to_name: Option<String>,
     pub guest_creator_email: Option<String>,
     pub guest_creator_name: Option<String>,
     pub guest_category: Option<String>,
@@ -247,6 +251,7 @@ async fn hydrate(pool: &MySqlPool, rows: Vec<GuestRow>) -> Result<Vec<GuestItem>
                 guest_destination: clean_string(row.destination.as_deref()),
                 guest_to_user_name: lookup(&user_names, &to_user_email),
                 guest_to_user_email: to_user_email,
+                guest_to_name: clean_string(row.to_name.as_deref()),
                 guest_creator_email: clean_string(row.creator_email.as_deref()),
                 guest_creator_name: clean_string(row.creator_name.as_deref()),
                 guest_category: clean_string(row.category.as_deref()),
@@ -421,6 +426,7 @@ pub struct NewGuest<'a> {
     pub identity_type: Option<&'a str>,
     pub address: Option<&'a str>,
     pub to_user_email: Option<&'a str>,
+    pub to_name: Option<&'a str>,
     pub photo: Option<&'a str>,
     pub arrived_at: DateTime<Utc>,
 }
@@ -430,9 +436,9 @@ pub async fn insert(pool: &MySqlPool, guest: &NewGuest<'_>) -> Result<i64, sqlx:
     let result = sqlx::query(
         "INSERT INTO tkguest (GuestUID, GuestGroupUID, GuestCreatorEmail, GuestCreatorName, \
          GuestName, GuestDestination, GuestPurpose, GuestNumber, GuestIdentity, GuestIdentityType, \
-         GuestCategory, GuestType, GuestAddress, GuestToUserEmail, GuestPhoto, GuestDT, GuestAckDT, \
-         GuestOutDT, GuestCheckOutByEmail, QRUID) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Umum', ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)",
+         GuestCategory, GuestType, GuestAddress, GuestToUserEmail, GuestToName, GuestPhoto, GuestDT, \
+         GuestAckDT, GuestOutDT, GuestCheckOutByEmail, QRUID) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Umum', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)",
     )
     .bind(generate_prefixed_uuid_v7("guest"))
     .bind(guest.group_uid)
@@ -447,6 +453,7 @@ pub async fn insert(pool: &MySqlPool, guest: &NewGuest<'_>) -> Result<i64, sqlx:
     .bind(guest.guest_type)
     .bind(guest.address)
     .bind(guest.to_user_email)
+    .bind(guest.to_name)
     .bind(guest.photo)
     .bind(guest.arrived_at)
     .bind(generate_uuid_v4())
@@ -467,13 +474,14 @@ pub struct GuestChanges {
     pub identity_type: Patch<String>,
     pub address: Patch<String>,
     pub to_user_email: Patch<String>,
+    pub to_name: Patch<String>,
     pub photo: Patch<String>,
 }
 
 impl GuestChanges {
     /// `(column, new value)` for every column to write; `None` writes `NULL`.
     fn columns(&self) -> Vec<(&'static str, Option<&str>)> {
-        let mut columns = Vec::with_capacity(10);
+        let mut columns = Vec::with_capacity(11);
         for (column, value) in [
             ("GuestName", &self.name),
             ("GuestDestination", &self.destination),
@@ -490,6 +498,7 @@ impl GuestChanges {
             ("GuestIdentityType", &self.identity_type),
             ("GuestAddress", &self.address),
             ("GuestToUserEmail", &self.to_user_email),
+            ("GuestToName", &self.to_name),
             ("GuestPhoto", &self.photo),
         ] {
             match patch {

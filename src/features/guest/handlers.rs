@@ -143,6 +143,7 @@ pub async fn create(
         .await?
         .ok_or_else(|| invalid(MSG_INVALID_TYPE))?;
     let to_user_email = clean_string(body.guest_to_user_email.as_deref());
+    let to_name = clean_string(body.guest_to_name.as_deref());
     if let Some(email) = &to_user_email
         && !repo::is_joined_member(&state.db, group, email).await?
     {
@@ -170,6 +171,7 @@ pub async fn create(
             identity_type: identity_type.as_deref(),
             address: address.as_deref(),
             to_user_email: to_user_email.as_deref(),
+            to_name: to_name.as_deref(),
             photo: photo.as_deref(),
             arrived_at: body
                 .guest_dt
@@ -233,6 +235,7 @@ pub async fn update(
         identity_type: clean_update_string(&body.guest_identity_type),
         address: clean_update_string(&body.guest_address),
         to_user_email,
+        to_name: clean_update_string(&body.guest_to_name),
         photo: clean_update_string(&body.guest_photo),
     };
     if changes.is_empty() {

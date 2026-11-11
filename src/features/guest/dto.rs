@@ -97,6 +97,7 @@ pub struct CreateGuestBody {
     pub guest_type: String,
     pub guest_address: Option<String>,
     pub guest_to_user_email: Option<String>,
+    pub guest_to_name: Option<String>,
     pub guest_photo: Option<String>,
     pub guest_dt: Option<String>,
 }
@@ -112,6 +113,7 @@ impl Body for CreateGuestBody {
         Field::required("guest_type", Kind::text(1, 64)),
         Field::nullable("guest_address", Kind::text(0, 512)),
         Field::nullable("guest_to_user_email", Kind::email(128)),
+        Field::nullable("guest_to_name", Kind::text(0, 128)),
         Field::nullable("guest_photo", Kind::text(0, 2048)),
         Field::nullable("guest_dt", Kind::text(0, NO_LIMIT)),
     ]);
@@ -137,6 +139,8 @@ pub struct UpdateGuestBody {
     #[serde(default)]
     pub guest_to_user_email: Patch<String>,
     #[serde(default)]
+    pub guest_to_name: Patch<String>,
+    #[serde(default)]
     pub guest_photo: Patch<String>,
 }
 
@@ -151,6 +155,7 @@ impl Body for UpdateGuestBody {
         Field::optional("guest_type", Kind::text(1, 64)),
         Field::nullable("guest_address", Kind::text(0, 512)),
         Field::nullable("guest_to_user_email", Kind::email(128)),
+        Field::nullable("guest_to_name", Kind::text(0, 128)),
         Field::nullable("guest_photo", Kind::text(0, 2048)),
     ]);
 }

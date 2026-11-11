@@ -211,6 +211,7 @@ model tkguest {
   GuestDT              DateTime  @default(now()) @db.Timestamp(0)
   GuestPurpose         String?   @db.VarChar(128)
   GuestToUserEmail     String?   @db.VarChar(128)
+  GuestToName          String?   @db.VarChar(128)
   GuestOutDT           DateTime? @db.Timestamp(0)
   GuestCategory        String?   @db.VarChar(32)
   GuestIdentityType    String?   @db.VarChar(32)
