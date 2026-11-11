@@ -78,6 +78,9 @@ pub struct Config {
     /// Origin of the URLs handed out for uploads, without a trailing slash. Empty derives it from
     /// the request `Host` header (development only).
     pub public_base_url: String,
+    /// Records every push-to-talk turn to `UPLOAD_DIR/ptt`. Off by default because it stores real
+    /// voice; listing, playing and deleting existing recordings work either way.
+    pub ptt_recording_enabled: bool,
     pub auth: AuthConfig,
 }
 
@@ -114,6 +117,7 @@ impl Config {
                 .trim()
                 .trim_end_matches('/')
                 .to_owned(),
+            ptt_recording_enabled: env_bool("PTT_RECORDING_ENABLED", false),
             auth: AuthConfig::from_env(),
             node_env,
         }
@@ -165,6 +169,7 @@ impl std::fmt::Debug for Config {
             .field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs)
             .field("upload_dir", &self.upload_dir)
             .field("public_base_url", &self.public_base_url)
+            .field("ptt_recording_enabled", &self.ptt_recording_enabled)
             .field("auth", &self.auth)
             .finish()
     }
@@ -187,6 +192,7 @@ impl Default for Config {
             trusted_proxy_cidrs: split_csv(DEFAULT_TRUSTED_PROXY_CIDRS),
             upload_dir: PathBuf::from(DEFAULT_UPLOAD_DIR),
             public_base_url: String::new(),
+            ptt_recording_enabled: false,
             auth: AuthConfig::default(),
         }
     }
