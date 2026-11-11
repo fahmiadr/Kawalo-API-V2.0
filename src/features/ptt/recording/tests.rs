@@ -415,3 +415,29 @@ fn write_demo_files() {
         .collect();
     std::fs::write(dir.join("demo_source.s16le"), pcm).unwrap();
 }
+
+/// Encodes a raw s16le 16 kHz mono file (`SPIKE_PCM_IN`) the way the session would see it, with
+/// jitter-free offsets; writes `SPIKE_OPUS_OUT`.
+#[test]
+#[ignore = "reads and writes files named by environment variables"]
+fn encode_pcm_file() {
+    let pcm = std::fs::read(std::env::var("SPIKE_PCM_IN").unwrap()).unwrap();
+    let bitrate = std::env::var("SPIKE_BITRATE").map_or(24_000, |v| v.parse().unwrap());
+    let frames: Vec<_> = pcm
+        .chunks_exact(PCM_PAYLOAD_BYTES)
+        .enumerate()
+        .map(|(i, p)| (i as u16, (i * 20) as u32, p.to_vec()))
+        .collect();
+    let cfg = Config {
+        bitrate_bps: bitrate,
+        dtx: std::env::var("SPIKE_DTX").is_ok(),
+        complexity: std::env::var("SPIKE_COMPLEXITY").map_or(5, |v| v.parse().unwrap()),
+        max_duration_ms: 120_000,
+        ..Config::default()
+    };
+    std::fs::write(
+        std::env::var("SPIKE_OPUS_OUT").unwrap(),
+        encode(&frames, cfg),
+    )
+    .unwrap();
+}
