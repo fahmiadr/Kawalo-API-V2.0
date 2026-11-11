@@ -128,6 +128,10 @@ impl FloorStore {
         format!("ptt:room:{group}:members")
     }
 
+    fn member_info_key(group: &str) -> String {
+        format!("ptt:room:{group}:member_info")
+    }
+
     /// Atomically takes the floor if it is free, or from a non-admin speaker when the requester
     /// is an admin.
     pub async fn acquire_floor(
@@ -186,14 +190,21 @@ impl FloorStore {
         Ok(raw.and_then(|raw| serde_json::from_str(&raw).ok()))
     }
 
-    /// Adds `user_id` to the presence set and returns the new size, in one round trip.
-    pub async fn add_member(&self, group: &str, user_id: &str) -> Result<u64, StoreError> {
+    /// Adds `member` to the presence set (and its identity to the info hash behind the REST member
+    /// list) and returns the new size, in one round trip. Keeping it to one round trip matters:
+    /// the join broadcast must not slip behind a neighbour's departure broadcast.
+    pub async fn add_member(&self, group: &str, member: &Speaker) -> Result<u64, StoreError> {
         let key = Self::members_key(group);
+        let info_key = Self::member_info_key(group);
         let mut conn = self.redis.clone();
         let (count,): (u64,) = redis::pipe()
-            .sadd(&key, user_id)
+            .sadd(&key, &member.user_id)
             .ignore()
             .expire(&key, MEMBERS_TTL_SECONDS)
+            .ignore()
+            .hset(&info_key, &member.user_id, serde_json::to_string(member)?)
+            .ignore()
+            .expire(&info_key, MEMBERS_TTL_SECONDS)
             .ignore()
             .scard(&key)
             .query_async(&mut conn)
@@ -207,10 +218,34 @@ impl FloorStore {
         let (count,): (u64,) = redis::pipe()
             .srem(&key, user_id)
             .ignore()
+            .hdel(Self::member_info_key(group), user_id)
+            .ignore()
             .scard(&key)
             .query_async(&mut conn)
             .await?;
         Ok(count)
+    }
+
+    /// Connected members by name (case-insensitive), then id. Ids without stored info (joined
+    /// through an instance that predates `member_info`) are skipped.
+    pub async fn members(&self, group: &str) -> Result<Vec<Speaker>, StoreError> {
+        let mut conn = self.redis.clone();
+        let ids: Vec<String> = conn.smembers(Self::members_key(group)).await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let raw: Vec<Option<String>> = redis::cmd("HMGET")
+            .arg(Self::member_info_key(group))
+            .arg(&ids)
+            .query_async(&mut conn)
+            .await?;
+        let mut members: Vec<Speaker> = raw
+            .into_iter()
+            .flatten()
+            .filter_map(|raw| serde_json::from_str(&raw).ok())
+            .collect();
+        members.sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
+        Ok(members)
     }
 
     pub async fn member_count(&self, group: &str) -> Result<u64, StoreError> {
@@ -312,9 +347,14 @@ mod tests {
     #[tokio::test]
     async fn presence_is_a_set_of_user_ids_with_a_day_of_retention() {
         let (store, g) = (store().await, group());
-        assert_eq!(store.add_member(&g, "u1").await.expect("add"), 1);
-        assert_eq!(store.add_member(&g, "u1").await.expect("add"), 1);
-        assert_eq!(store.add_member(&g, "u2").await.expect("add"), 2);
+        let member = |id: &str| Speaker {
+            user_id: id.to_owned(),
+            name: id.to_owned(),
+            role: "GUARD".to_owned(),
+        };
+        assert_eq!(store.add_member(&g, &member("u1")).await.expect("add"), 1);
+        assert_eq!(store.add_member(&g, &member("u1")).await.expect("add"), 1);
+        assert_eq!(store.add_member(&g, &member("u2")).await.expect("add"), 2);
         assert_eq!(store.member_count(&g).await.expect("count"), 2);
 
         let mut conn = store.redis.clone();

@@ -191,7 +191,17 @@ impl Session {
     async fn announce(&self) -> Result<(), StoreError> {
         let inner = &self.hub.0;
         inner.relay.join(&self.group).await?;
-        let member_count = inner.store.add_member(&self.group, &self.user.sub).await?;
+        let member_count = inner
+            .store
+            .add_member(
+                &self.group,
+                &Speaker {
+                    user_id: self.user.sub.clone(),
+                    name: self.user.name.clone(),
+                    role: self.user.role.clone(),
+                },
+            )
+            .await?;
         let current = inner.store.current_floor(&self.group).await?;
         let state = if current.is_some() {
             FloorState::Transmitting

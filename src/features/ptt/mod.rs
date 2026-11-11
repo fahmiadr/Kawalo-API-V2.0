@@ -16,6 +16,7 @@ use axum::routing::get;
 use crate::core::state::AppState;
 
 mod frames;
+mod members;
 mod recorder;
 pub mod recording;
 mod recordings;
@@ -28,6 +29,11 @@ mod ws;
 /// REST routes for recorded turns, mounted under `/api/v1`.
 pub fn recordings_router() -> Router<AppState> {
     recordings::router()
+}
+
+/// REST list of who is connected to the channel, mounted under `/api/v1`.
+pub fn members_router() -> Router<AppState> {
+    members::router()
 }
 
 /// WebSocket routes, mounted at the root (outside `/api/v1`). Each call creates its own socket
