@@ -441,3 +441,45 @@ fn encode_pcm_file() {
     )
     .unwrap();
 }
+
+/// Runs with overflow checks on (dev profile), so an arithmetic overflow in the transpiled
+/// libopus, which C would wrap silently, shows up here as a panic.
+#[test]
+fn extreme_pcm_is_encoded_and_decodes() {
+    let mut seed = 0x1234_5678_u32;
+    let mut noise = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (seed >> 16) as u16 as i16
+    };
+    let frames: Vec<(u16, u32, Vec<u8>)> = (0..300)
+        .map(|i| {
+            let samples: Vec<i16> = (0..FRAME_SAMPLES)
+                .map(|n| match i / 50 {
+                    0 => noise(),
+                    1 => {
+                        if n % 2 == 0 {
+                            i16::MIN
+                        } else {
+                            i16::MAX
+                        }
+                    }
+                    2 => i16::MAX,
+                    3 => 0,
+                    4 => noise() / 64,
+                    _ => {
+                        if (n / 8) % 2 == 0 {
+                            i16::MAX
+                        } else {
+                            i16::MIN
+                        }
+                    }
+                })
+                .collect();
+            let bytes = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            (i as u16, i as u32 * 20, bytes)
+        })
+        .collect();
+    let parsed = parse(&encode(&frames, Config::default()));
+    let decoded = decode_all(&parsed.packets, 16_000);
+    assert!(decoded.len() >= 300 * FRAME_SAMPLES);
+}
