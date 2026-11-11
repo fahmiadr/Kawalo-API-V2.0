@@ -109,8 +109,7 @@ pub async fn remove(
 /// uploader never produces anything else), so it cannot leave `root`.
 fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
     let path = Path::new(relative);
-    path.components()
-        .all(|c| matches!(c, Component::Normal(_)))
+    (path.components().count() > 0 && path.components().all(|c| matches!(c, Component::Normal(_))))
         .then(|| root.join(path))
 }
 
