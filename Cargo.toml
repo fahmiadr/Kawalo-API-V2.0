@@ -31,6 +31,7 @@ serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "json", "macros"] }
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-util = { version = "0.7.20", features = ["io"] }
@@ -43,7 +44,6 @@ uuid = { version = "1.29.2", features = ["v4", "v7"] }
 
 [dev-dependencies]
 http-body-util = "0.1.5"
-tempfile = "3.27.0"
 tokio-tungstenite = "0.30.0"
 
 [lints.clippy]
@@ -67,3 +67,7 @@ path = "src/main.rs"
 [[bin]]
 name = "rotate_key"
 path = "src/bin/rotate_key.rs"
+
+[[bin]]
+name = "ptt_transcriber"
+path = "src/bin/ptt_transcriber.rs"

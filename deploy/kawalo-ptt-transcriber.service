@@ -1,0 +1,55 @@
+# Server-side speech-to-text for PTT recordings (docs/ptt-transcriber.md).
+# Install: /etc/systemd/system/kawalo-ptt-transcriber.service, then
+#   systemctl daemon-reload && systemctl enable --now kawalo-ptt-transcriber
+# Stopping the service is the off switch; the API has no flag for it.
+
+[Unit]
+Description=Kawalo PTT transcriber (whisper.cpp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kawalo
+Group=kawalo
+WorkingDirectory=/opt/kawalo
+EnvironmentFile=/etc/kawalo/kawalo.env
+Environment=TZ=Asia/Jakarta
+ExecStart=/opt/kawalo/ptt_transcriber
+Restart=on-failure
+RestartSec=10
+# SIGTERM kills whisper-cli and hands the current job back to the queue within a second.
+TimeoutStopSec=30
+
+# The relay, MySQL and the other aaPanel sites always come first.
+Nice=19
+CPUWeight=10
+CPUQuota=50%
+IOSchedulingClass=idle
+MemoryMax=1G
+
+# Hardening. The worker reads UPLOAD_DIR and the model, writes only its private /tmp, and needs
+# the database socket/TCP and nothing else.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -112,10 +112,8 @@ pub fn packet_duration_48k(packet: &[u8]) -> Option<u32> {
     u32::try_from(n).ok().filter(|&n| n > 0)
 }
 
-#[cfg(test)]
 pub use decoder::Decoder;
 
-#[cfg(test)]
 mod decoder {
     use super::{OpusError, check};
     use std::ptr::NonNull;

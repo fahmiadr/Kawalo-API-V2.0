@@ -24,6 +24,7 @@ use std::io::{self, Write};
 
 use ogg::{PacketWriteEndInfo, PacketWriter};
 
+pub use opus::{Decoder, OpusError};
 use opus::{Encoder, EncoderSettings, FRAME_SAMPLES, SAMPLE_RATE};
 
 /// One frame lasts 20 ms: 960 samples at the 48 kHz granule rate.

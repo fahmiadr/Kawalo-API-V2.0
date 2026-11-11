@@ -24,6 +24,7 @@ mod registry;
 mod relay;
 mod session;
 mod store;
+pub mod transcriber;
 mod ws;
 
 /// REST routes for recorded turns, mounted under `/api/v1`.
