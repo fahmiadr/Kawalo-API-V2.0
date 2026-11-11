@@ -47,6 +47,7 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .merge(features::schedule::router())
         .merge(features::information::router())
         .merge(features::incident::router())
+        .merge(features::ptt::recordings_router())
         .merge(features::uploads::router());
 
     let limiter = RateLimitState {

@@ -16,12 +16,19 @@ use axum::routing::get;
 use crate::core::state::AppState;
 
 mod frames;
+mod recorder;
 pub mod recording;
+mod recordings;
 mod registry;
 mod relay;
 mod session;
 mod store;
 mod ws;
+
+/// REST routes for recorded turns, mounted under `/api/v1`.
+pub fn recordings_router() -> Router<AppState> {
+    recordings::router()
+}
 
 /// WebSocket routes, mounted at the root (outside `/api/v1`). Each call creates its own socket
 /// registry and relay, so two apps in one process behave like two instances of a cluster.

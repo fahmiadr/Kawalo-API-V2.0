@@ -13,6 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use crate::core::error::ApiError;
 use crate::core::state::AppState;
 
+use super::recorder::Recorder;
 use super::registry::{ClientTx, payload_len};
 use super::session::{Hub, UserSession};
 
@@ -40,10 +41,15 @@ impl HubCell {
 
     fn get(&self, state: &AppState) -> &Hub {
         self.hub.get_or_init(|| {
+            let recorder = state
+                .config
+                .ptt_recording_enabled
+                .then(|| Recorder::new(state.db.clone(), state.config.upload_dir.clone()));
             Hub::start(
                 state.redis_client.clone(),
                 state.redis.clone(),
                 self.tot_duration,
+                recorder,
             )
         })
     }
@@ -147,7 +153,7 @@ pub async fn upgrade(
     }
 
     let hub = cell.get(&state).clone();
-    let user = UserSession::new(sub, payload.name, payload.role);
+    let user = UserSession::new(sub, payload.email, payload.name, payload.role);
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)

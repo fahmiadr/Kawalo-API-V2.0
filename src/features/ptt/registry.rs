@@ -15,6 +15,8 @@ use dashmap::mapref::entry::Entry;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
+use super::recorder::TurnTx;
+
 /// A listener whose queue holds more than this is skipped for audio, which keeps latency bounded
 /// instead of letting a slow link fall seconds behind (about five Opus frames).
 pub const MAX_BUFFERED_BYTES: usize = 5 * 1024;
@@ -111,16 +113,27 @@ struct Floor {
     speaker: Option<ActiveSpeaker>,
     tot: Option<Tot>,
     last_lease_renewal: Option<Instant>,
+    /// Ends the current turn's recording when dropped, which is why every way the floor can
+    /// change (release, time-out, preemption, disconnect, a new grant) goes through here.
+    recorder: Option<TurnTx>,
 }
 
 impl Floor {
     fn clear(&mut self) {
         self.speaker = None;
+        self.recorder = None;
         self.last_lease_renewal = None;
         if let Some(tot) = self.tot.take() {
             tot.task.abort();
         }
     }
+}
+
+/// What the room decided about one inbound audio frame, see [`Room::audio_gate`].
+#[derive(Debug)]
+pub struct AudioGate {
+    pub renew_lease: bool,
+    pub recorder: Option<TurnTx>,
 }
 
 #[derive(Debug)]
@@ -198,9 +211,11 @@ impl Room {
         })
     }
 
-    /// Decides whether an inbound audio frame may be relayed. `None` drops it; `Some(true)` means
-    /// the Redis lease is due for renewal (at most once per second).
-    pub fn audio_gate(&self, socket_id: &str, user_id: &str) -> Option<bool> {
+    /// Decides whether an inbound audio frame may be relayed. `None` drops it; otherwise the gate
+    /// says whether the Redis lease is due for renewal (at most once per second) and, when the
+    /// turn is being recorded, where to send the frame. Taken under the same lock as the speaker
+    /// check so a frame can never reach the next speaker's recording.
+    pub fn audio_gate(&self, socket_id: &str, user_id: &str) -> Option<AudioGate> {
         let mut floor = self.floor();
         let current = floor.speaker.as_ref()?;
         if &*current.socket_id != socket_id && &*current.user_id != user_id {
@@ -213,7 +228,10 @@ impl Room {
         if due {
             floor.last_lease_renewal = Some(now);
         }
-        Some(due)
+        Some(AudioGate {
+            renew_lease: due,
+            recorder: floor.recorder.clone(),
+        })
     }
 
     #[cfg(test)]
@@ -222,11 +240,18 @@ impl Room {
     }
 
     /// Makes `speaker` the active speaker and arms the time-out timer, replacing any previous one.
-    /// `arm` receives the timer's generation and returns the handle that cancels it.
-    pub fn grant(&self, speaker: ActiveSpeaker, arm: impl FnOnce(u64) -> AbortHandle) {
+    /// `arm` receives the timer's generation and returns the handle that cancels it. `recorder`
+    /// replaces the previous turn's, which ends that recording.
+    pub fn grant(
+        &self,
+        speaker: ActiveSpeaker,
+        recorder: Option<TurnTx>,
+        arm: impl FnOnce(u64) -> AbortHandle,
+    ) {
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         let mut floor = self.floor();
         floor.speaker = Some(speaker);
+        floor.recorder = recorder;
         let previous = floor.tot.replace(Tot {
             generation,
             task: arm(generation),
@@ -319,6 +344,8 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::error::TryRecvError;
+
     use super::*;
 
     fn client(id: &str, user: &str) -> (Client, Outbox) {
@@ -364,7 +391,7 @@ mod tests {
         let registry = Registry::default();
         let (a, _oa) = client("s1", "u1");
         let room = registry.register("g", a);
-        room.grant(speaker("s1", "u1"), noop_task);
+        room.grant(speaker("s1", "u1"), None, noop_task);
         registry.unregister("g", "s1");
         assert_eq!(room.active_speaker(), None);
     }
@@ -421,7 +448,7 @@ mod tests {
         let (a, _oa) = client("s1", "u1");
         let room = registry.register("g", a);
         assert!(!room.is_active_speaker("s1", Some("u1")));
-        room.grant(speaker("s1", "u1"), noop_task);
+        room.grant(speaker("s1", "u1"), None, noop_task);
         assert!(room.is_active_speaker("s1", None));
         assert!(room.is_active_speaker("other", Some("u1")));
         assert!(!room.is_active_speaker("other", Some("u2")));
@@ -433,13 +460,14 @@ mod tests {
         let registry = Registry::default();
         let (a, _oa) = client("s1", "u1");
         let room = registry.register("g", a);
-        assert_eq!(room.audio_gate("s1", "u1"), None);
-        room.grant(speaker("s1", "u1"), noop_task);
-        assert_eq!(room.audio_gate("s1", "u1"), Some(true));
-        assert_eq!(room.audio_gate("s1", "u1"), Some(false));
-        assert_eq!(room.audio_gate("zz", "zz"), None);
+        assert!(room.audio_gate("s1", "u1").is_none());
+        room.grant(speaker("s1", "u1"), None, noop_task);
+        let renew = |s: &str, u: &str| room.audio_gate(s, u).map(|gate| gate.renew_lease);
+        assert_eq!(renew("s1", "u1"), Some(true));
+        assert_eq!(renew("s1", "u1"), Some(false));
+        assert_eq!(renew("zz", "zz"), None);
         room.clear_floor();
-        assert_eq!(room.audio_gate("s1", "u1"), None);
+        assert!(room.audio_gate("s1", "u1").is_none());
     }
 
     #[tokio::test]
@@ -449,7 +477,7 @@ mod tests {
         let room = registry.register("g", a);
         let mut generations = Vec::new();
         for _ in 0..2 {
-            room.grant(speaker("s1", "u1"), |generation| {
+            room.grant(speaker("s1", "u1"), None, |generation| {
                 generations.push(generation);
                 noop_task(generation)
             });
@@ -466,9 +494,39 @@ mod tests {
         let registry = Registry::default();
         let (a, _oa) = client("s1", "u1");
         let room = registry.register("g", a);
-        room.grant(speaker("s1", "u1"), noop_task);
+        room.grant(speaker("s1", "u1"), None, noop_task);
         assert_eq!(room.clear_if_speaker("u2"), None);
         assert_eq!(room.clear_if_speaker("u1").as_deref(), Some("s1"));
         assert_eq!(room.active_speaker(), None);
+    }
+
+    #[tokio::test]
+    async fn every_way_the_floor_changes_ends_the_recording() {
+        use tokio::sync::mpsc::error::TryRecvError::Disconnected;
+
+        let registry = Registry::default();
+        let (a, _oa) = client("s1", "u1");
+        let room = registry.register("g", a);
+
+        let (first, mut first_rx) = TurnTx::detached(4);
+        room.grant(speaker("s1", "u1"), Some(first), noop_task);
+        let gate = room.audio_gate("s1", "u1").expect("speaker");
+        assert!(gate.recorder.is_some());
+        drop(gate);
+        assert!(matches!(first_rx.try_recv(), Err(TryRecvError::Empty)));
+
+        // A new grant (preemption) replaces the recorder and ends the old turn.
+        let (second, mut second_rx) = TurnTx::detached(4);
+        room.grant(speaker("s2", "u2"), Some(second), noop_task);
+        assert!(matches!(first_rx.try_recv(), Err(Disconnected)));
+        assert!(room.audio_gate("s1", "u1").is_none());
+
+        room.clear_floor();
+        assert!(matches!(second_rx.try_recv(), Err(Disconnected)));
+
+        let (third, mut third_rx) = TurnTx::detached(4);
+        room.grant(speaker("s1", "u1"), Some(third), noop_task);
+        registry.unregister("g", "s1");
+        assert!(matches!(third_rx.try_recv(), Err(Disconnected)));
     }
 }

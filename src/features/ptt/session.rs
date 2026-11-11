@@ -10,7 +10,8 @@ use serde_json::Value;
 use super::frames::{
     DenyReason, FloorState, Frame, Inbound, ResetReason, RevokeReason, Speaker, parse_inbound,
 };
-use super::registry::{ActiveSpeaker, Client, ClientTx, Registry, Room};
+use super::recorder::{Recorder, TurnMeta};
+use super::registry::{ActiveSpeaker, AudioGate, Client, ClientTx, Registry, Room};
 use super::relay::Relay;
 use super::store::{FloorLock, FloorStore, StoreError};
 
@@ -33,6 +34,8 @@ struct HubInner {
     store: FloorStore,
     relay: Relay,
     tot_duration: Duration,
+    /// `None` unless `PTT_RECORDING_ENABLED`; then nothing below creates a recorder.
+    recorder: Option<Recorder>,
 }
 
 impl Hub {
@@ -40,6 +43,7 @@ impl Hub {
         client: redis::Client,
         redis: redis::aio::ConnectionManager,
         tot_duration: Duration,
+        recorder: Option<Recorder>,
     ) -> Self {
         let registry = Arc::new(Registry::default());
         let relay = Relay::start(client, redis.clone(), Arc::clone(&registry));
@@ -48,6 +52,7 @@ impl Hub {
             store: FloorStore::new(redis),
             relay,
             tot_duration,
+            recorder,
         }))
     }
 
@@ -140,15 +145,22 @@ impl Hub {
 #[derive(Debug, Clone)]
 pub struct UserSession {
     pub sub: String,
+    pub email: Option<String>,
     pub name: String,
     pub role: String,
 }
 
 impl UserSession {
     /// Applies the same defaults as the TypeScript controller: name `Guard`, role `GUARD`.
-    pub fn new(sub: String, name: Option<String>, role: Option<String>) -> Self {
+    pub fn new(
+        sub: String,
+        email: Option<String>,
+        name: Option<String>,
+        role: Option<String>,
+    ) -> Self {
         Self {
             sub,
+            email: email.filter(|e| !e.is_empty()),
             name: name
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| "Guard".into()),
@@ -245,9 +257,16 @@ impl Session {
     /// through the relay. Frames from anyone else, including a speaker preempted a moment ago,
     /// are dropped.
     pub fn on_binary(&self, frame: &Bytes) {
-        let Some(renew_lease) = self.room.audio_gate(&self.socket_id, &self.user_id) else {
+        let Some(AudioGate {
+            renew_lease,
+            recorder,
+        }) = self.room.audio_gate(&self.socket_id, &self.user_id)
+        else {
             return;
         };
+        if let Some(recorder) = recorder {
+            recorder.offer(frame);
+        }
         if renew_lease {
             let hub = self.hub.clone();
             let group = Arc::clone(&self.group);
@@ -317,11 +336,21 @@ impl Session {
             Arc::clone(&self.user_id),
             Arc::clone(&self.socket_id),
         );
+        let recorder = inner.recorder.as_ref().map(|recorder| {
+            recorder.start_turn(TurnMeta {
+                group: Arc::clone(&self.group),
+                user_id: self.user.sub.clone(),
+                email: self.user.email.clone(),
+                name: self.user.name.clone(),
+                role: self.user.role.clone(),
+            })
+        });
         self.room.grant(
             ActiveSpeaker {
                 socket_id: Arc::clone(&self.socket_id),
                 user_id: Arc::clone(&self.user_id),
             },
+            recorder,
             |generation| {
                 let tot = inner.tot_duration;
                 tokio::spawn(async move {
