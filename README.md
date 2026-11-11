@@ -143,7 +143,6 @@ Dimuat dari `.env.dev|staging|prod` (sesuai `NODE_ENV`) lalu `.env` di working d
 | `TRUSTED_PROXY_CIDRS` | loopback + jaringan privat | Daftar CIDR proxy yang dipercaya untuk `X-Forwarded-For` |
 | `UPLOAD_DIR` | `./uploads` | Akar penyimpanan unggahan; di produksi harus volume persisten |
 | `PUBLIC_BASE_URL` | kosong | Origin URL unggahan tanpa slash akhir (mis. `https://api.contoh.id`). Kosong: diturunkan dari header `Host` dengan skema `http` (hanya untuk dev) |
-| `PTT_RECORDING_ENABLED` | `false` | Merekam setiap giliran bicara PTT ke `UPLOAD_DIR/ptt` dan tabel `tkpttrecording`. Mati secara default karena menyimpan suara asli; daftar, putar, dan hapus rekaman yang sudah ada tetap jalan saat mati. Dicatat sekali saat start (`[PTT] recording enabled/disabled`) |
 | `LOGIN_RATE_LIMIT_IP_MAX`, `LOGIN_RATE_LIMIT_DURATION`, `LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_DURATION` | `10`, `900`, `5`, `900` | Throttling login (detik) |
 
 ## Endpoint ringkas
@@ -167,7 +166,7 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 
 ### Riwayat rekaman PTT (`ptt/recordings`)
 
-Fitur baru, tidak ada di versi TypeScript. Dengan `PTT_RECORDING_ENABLED=true`, tiap giliran bicara (dari lantai diberikan sampai dilepas, dicabut/diambil alih admin,
+Fitur baru, tidak ada di versi TypeScript. Selalu aktif (tanpa flag): tiap giliran bicara (dari lantai diberikan sampai dilepas, dicabut/diambil alih admin,
 `TOT_DURATION` 30 detik habis, atau soket pembicara putus) direkam di instance yang memegang soket pembicara: payload 640 byte (PCM 16 kHz mono 16-bit, 20 ms) di-encode
 ke Opus (VoIP, 24 kbps) dan dikemas Ogg/Opus; payload dengan panjang lain dianggap sudah Opus dan dikemas apa adanya. Berkas ditulis atomik ke
 `UPLOAD_DIR/ptt/{yyyy}/{mm}/{uuid}.opus` (di luar rute publik `/uploads`), lalu satu baris `tkpttrecording` (migrasi `20261111010000_add_ptt_recording`).
@@ -195,7 +194,7 @@ Peran `ADMIN`, `GUARD`, dan `USER` boleh melihat dan memutar. `SUPER_ADMIN` tida
 * `DELETE /api/v1/ptt/recordings/{id}`: hanya `allow_admin` (aturan yang sama dengan `DELETE /incidents/:id`). Urutan cek: grup aktif (`400`), bukan admin `403 AUTH_FORBIDDEN`
   ("Hanya administrator yang dapat menghapus rekaman."), tidak ada/grup lain/sudah dihapus `404` (jadi hapus kedua `404`), tanpa token `401`. Sukses `200`
   `{"success":true,"message":"Rekaman berhasil dihapus","data":null}`: mengisi `DeletedAt` (baris tetap sebagai nisan) lalu menghapus berkas dengan upaya terbaik (gagal hanya dicatat `warn`).
-  Berjalan juga saat `PTT_RECORDING_ENABLED=false`. Tidak ada hapus massal, pemulihan, retensi otomatis, atau kuota disk.
+  Tidak ada hapus massal, pemulihan, retensi otomatis, atau kuota disk.
 
 ### Unggah berkas (`uploads`)
 

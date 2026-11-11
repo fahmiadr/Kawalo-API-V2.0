@@ -45,15 +45,6 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    tracing::info!(
-        "[PTT] recording {}",
-        if config.ptt_recording_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-
     let pool = db::connect(&config)
         .await
         .context("connecting to MariaDB")?;

@@ -34,8 +34,7 @@ struct HubInner {
     store: FloorStore,
     relay: Relay,
     tot_duration: Duration,
-    /// `None` unless `PTT_RECORDING_ENABLED`; then nothing below creates a recorder.
-    recorder: Option<Recorder>,
+    recorder: Recorder,
 }
 
 impl Hub {
@@ -43,7 +42,7 @@ impl Hub {
         client: redis::Client,
         redis: redis::aio::ConnectionManager,
         tot_duration: Duration,
-        recorder: Option<Recorder>,
+        recorder: Recorder,
     ) -> Self {
         let registry = Arc::new(Registry::default());
         let relay = Relay::start(client, redis.clone(), Arc::clone(&registry));
@@ -336,15 +335,13 @@ impl Session {
             Arc::clone(&self.user_id),
             Arc::clone(&self.socket_id),
         );
-        let recorder = inner.recorder.as_ref().map(|recorder| {
-            recorder.start_turn(TurnMeta {
-                group: Arc::clone(&self.group),
-                user_id: self.user.sub.clone(),
-                email: self.user.email.clone(),
-                name: self.user.name.clone(),
-                role: self.user.role.clone(),
-            })
-        });
+        let recorder = Some(inner.recorder.start_turn(TurnMeta {
+            group: Arc::clone(&self.group),
+            user_id: self.user.sub.clone(),
+            email: self.user.email.clone(),
+            name: self.user.name.clone(),
+            role: self.user.role.clone(),
+        }));
         self.room.grant(
             ActiveSpeaker {
                 socket_id: Arc::clone(&self.socket_id),

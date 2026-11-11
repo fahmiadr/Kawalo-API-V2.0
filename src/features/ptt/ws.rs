@@ -41,10 +41,7 @@ impl HubCell {
 
     fn get(&self, state: &AppState) -> &Hub {
         self.hub.get_or_init(|| {
-            let recorder = state
-                .config
-                .ptt_recording_enabled
-                .then(|| Recorder::new(state.db.clone(), state.config.upload_dir.clone()));
+            let recorder = Recorder::new(state.db.clone(), state.config.upload_dir.clone());
             Hub::start(
                 state.redis_client.clone(),
                 state.redis.clone(),

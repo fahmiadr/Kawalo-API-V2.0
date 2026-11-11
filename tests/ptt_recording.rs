@@ -32,12 +32,11 @@ struct Rig {
 }
 
 impl Rig {
-    async fn new(recording: bool) -> Self {
+    async fn new() -> Self {
         let dir = tempfile::tempdir().expect("upload dir");
         let root = dir.path().to_owned();
         let app = TestApp::start_with(move |config| {
             config.upload_dir = root;
-            config.ptt_recording_enabled = recording;
         })
         .await;
         Self {
@@ -266,7 +265,7 @@ mod recording {
 
     #[tokio::test]
     async fn a_released_turn_becomes_a_valid_ogg_opus_file_and_row() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let (guard, admin, user) = (
             rig.guard("budi").await,
             rig.admin("boss").await,
@@ -357,7 +356,7 @@ mod recording {
 
     #[tokio::test]
     async fn an_admin_preempting_a_guard_makes_two_recordings() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let (guard, admin) = (rig.guard("budi").await, rig.admin("boss").await);
         let addr = rig.app.serve().await;
         let mut g = join(addr, rig.group(), &guard).await;
@@ -386,7 +385,7 @@ mod recording {
 
     #[tokio::test]
     async fn a_dropped_connection_still_saves_the_turn() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let addr = rig.app.serve().await;
         let mut ws = join(addr, rig.group(), &guard).await;
@@ -400,7 +399,7 @@ mod recording {
 
     #[tokio::test]
     async fn the_time_out_timer_ends_and_saves_the_turn() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let router = Router::new()
             .merge(kawalo_api::features::ptt::ws_router_with_tot(
                 Duration::from_millis(400),
@@ -424,7 +423,7 @@ mod recording {
 
     #[tokio::test]
     async fn a_turn_without_audio_leaves_nothing() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let addr = rig.app.serve().await;
         let mut ws = join(addr, rig.group(), &guard).await;
@@ -444,35 +443,6 @@ mod recording {
         );
         assert!(!rig.dir.path().join("ptt").exists());
     }
-
-    #[tokio::test]
-    async fn with_the_flag_off_nothing_is_recorded_and_relay_is_unchanged() {
-        let rig = Rig::new(false).await;
-        let (guard, other) = (rig.guard("budi").await, rig.guard("sari").await);
-        let addr = rig.app.serve().await;
-        let mut speaker = join(addr, rig.group(), &guard).await;
-        speaker.json().await;
-        let mut listener = join(addr, rig.group(), &other).await;
-        listener.json().await;
-        speaker.json().await; // member count update
-
-        request_floor(&mut speaker).await;
-        listener.json().await; // FLOOR_STATE_CHANGED transmitting
-        let frame = pcm_frame(0);
-        speaker.audio(&frame).await;
-        assert_eq!(listener.binary().await.as_ref(), frame.as_slice());
-        release(&mut speaker).await;
-
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        let rows: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tkpttrecording WHERE GroupUID = ?")
-                .bind(rig.group())
-                .fetch_one(&rig.app.state.db)
-                .await
-                .expect("count");
-        assert_eq!(rows, 0);
-        assert!(!rig.dir.path().join("ptt").exists());
-    }
 }
 
 mod listing {
@@ -480,7 +450,7 @@ mod listing {
 
     #[tokio::test]
     async fn pages_newest_first_by_cursor_and_stays_in_the_group() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let tag = Uuid::new_v4().simple().to_string();
         let base = Utc::now().trunc_subsecs(3) - chrono::Duration::hours(1);
@@ -543,7 +513,7 @@ mod listing {
 
     #[tokio::test]
     async fn validates_the_query_and_requires_a_token() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         for query in [
             "?limit=0",
@@ -569,7 +539,7 @@ mod listing {
 
     #[tokio::test]
     async fn default_page_size_is_twenty() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let base = Utc::now().trunc_subsecs(3) - chrono::Duration::hours(2);
         for n in 0..22 {
@@ -604,7 +574,7 @@ mod audio {
 
     #[tokio::test]
     async fn serves_the_whole_file_and_byte_ranges() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let user = rig.user("sari").await;
         let (url, bytes) = setup(&rig).await;
 
@@ -674,7 +644,7 @@ mod audio {
 
     #[tokio::test]
     async fn needs_a_token_and_the_right_group() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let (url, _) = setup(&rig).await;
         let (status, _, _) = rig.raw(Method::GET, &url, None, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -706,7 +676,7 @@ mod audio {
 
     #[tokio::test]
     async fn never_serves_a_path_outside_the_upload_root() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let secret = tempfile::NamedTempFile::new().expect("secret");
         std::fs::write(secret.path(), b"secret").expect("write");
@@ -734,7 +704,7 @@ mod audio {
 
     #[tokio::test]
     async fn a_row_whose_file_is_gone_is_a_404() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let guard = rig.guard("budi").await;
         let id = format!("rec_{}_nofile", rig.squad.tag);
         rig.insert(
@@ -772,7 +742,7 @@ mod deleting {
 
     #[tokio::test]
     async fn an_admin_soft_deletes_the_row_and_removes_the_file() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let admin = rig.admin("boss").await;
         let (id, url, file) = seeded(&rig).await;
 
@@ -799,7 +769,7 @@ mod deleting {
 
     #[tokio::test]
     async fn guards_and_users_are_refused_and_nothing_changes() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let (id, url, file) = seeded(&rig).await;
         for token in [rig.guard("budi").await, rig.user("sari").await] {
             let (status, json) = rig.app.call("DELETE", &url, Some(&token), None).await;
@@ -815,7 +785,7 @@ mod deleting {
 
     #[tokio::test]
     async fn an_admin_of_another_group_cannot_delete_it() {
-        let rig = Rig::new(true).await;
+        let rig = Rig::new().await;
         let (id, url, file) = seeded(&rig).await;
         let outsider = rig
             .app
@@ -833,7 +803,7 @@ mod deleting {
 
     #[tokio::test]
     async fn works_with_recording_switched_off_and_tolerates_file_trouble() {
-        let rig = Rig::new(false).await;
+        let rig = Rig::new().await;
         let admin = rig.admin("boss").await;
         let (id, url, file) = seeded(&rig).await;
         std::fs::remove_file(&file).expect("file already gone");
