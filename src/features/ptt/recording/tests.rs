@@ -424,7 +424,9 @@ fn encode_pcm_file() {
     let pcm = std::fs::read(std::env::var("SPIKE_PCM_IN").unwrap()).unwrap();
     let bitrate = std::env::var("SPIKE_BITRATE").map_or(24_000, |v| v.parse().unwrap());
     let frames: Vec<_> = pcm
-        .chunks_exact(PCM_PAYLOAD_BYTES)
+        .as_chunks::<PCM_PAYLOAD_BYTES>()
+        .0
+        .iter()
         .enumerate()
         .map(|(i, p)| (i as u16, (i * 20) as u32, p.to_vec()))
         .collect();
