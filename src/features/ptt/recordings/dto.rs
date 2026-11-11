@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::repository::RecordingRow;
 use crate::core::clean::iso_string;
 use crate::core::constants::{DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, default_api_prefix};
+use crate::core::extract::schema::{Body, Field, Kind, Schema};
 use crate::core::extract::{Numeric, Validate, ValidationErrors};
 
 #[derive(Debug, Default, Deserialize)]
@@ -73,6 +74,11 @@ pub struct RecordingItem {
     pub size_bytes: i32,
     /// Absolute path on this server; needs the same `Authorization` header as the list.
     pub audio_path: String,
+    /// Statuses: `done`, `unsupported`, `failed`, `processing`, `no_speech`, `error`, or `null`.
+    pub transcript: Option<String>,
+    pub transcript_locale: Option<String>,
+    pub transcript_source: Option<String>,
+    pub transcript_status: Option<String>,
 }
 
 impl From<RecordingRow> for RecordingItem {
@@ -89,8 +95,51 @@ impl From<RecordingRow> for RecordingItem {
             started_at: iso_string(row.started_at),
             duration_ms: row.duration_ms,
             size_bytes: row.size_bytes,
+            transcript: row.transcript,
+            transcript_locale: row.transcript_locale,
+            transcript_source: row.transcript_source,
+            transcript_status: row.transcript_status,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptState {
+    Ok,
+    Unsupported,
+    Failed,
+}
+
+impl TranscriptState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Unsupported => "unsupported",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TranscriptBody {
+    pub status: TranscriptState,
+    pub text: Option<String>,
+    pub locale: Option<String>,
+}
+
+impl Body for TranscriptBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("status", Kind::OneOf(&["ok", "unsupported", "failed"])),
+        Field::nullable("text", Kind::text(0, 2000)),
+        Field::nullable("locale", Kind::text(2, 16)),
+    ]);
+}
+
+#[derive(Debug, Serialize)]
+pub struct TranscriptSaved {
+    pub id: String,
+    pub transcript_status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

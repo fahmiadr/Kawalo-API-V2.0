@@ -23,12 +23,21 @@ pub struct RecordingRow {
     pub size_bytes: i32,
     #[sqlx(rename = "FilePath")]
     pub file_path: String,
+    #[sqlx(rename = "Transcript")]
+    pub transcript: Option<String>,
+    #[sqlx(rename = "TranscriptLocale")]
+    pub transcript_locale: Option<String>,
+    #[sqlx(rename = "TranscriptSource")]
+    pub transcript_source: Option<String>,
+    #[sqlx(rename = "TranscriptStatus")]
+    pub transcript_status: Option<String>,
 }
 
 macro_rules! columns {
     () => {
         "RecordingUID, SpeakerUserId, SpeakerEmail, SpeakerName, SpeakerRole, StartedAt, \
-         DurationMs, SizeBytes, FilePath"
+         DurationMs, SizeBytes, FilePath, Transcript, TranscriptLocale, TranscriptSource, \
+         TranscriptStatus"
     };
 }
 
@@ -40,6 +49,7 @@ pub struct NewRecording<'a> {
     pub speaker_email: Option<&'a str>,
     pub speaker_name: &'a str,
     pub speaker_role: &'a str,
+    pub request_id: Option<&'a str>,
     pub started_at: DateTime<Utc>,
     pub duration_ms: i32,
     pub size_bytes: i32,
@@ -49,8 +59,8 @@ pub struct NewRecording<'a> {
 pub async fn insert(db: &MySqlPool, new: &NewRecording<'_>) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO tkpttrecording (RecordingUID, GroupUID, SpeakerUserId, SpeakerEmail, \
-         SpeakerName, SpeakerRole, StartedAt, DurationMs, SizeBytes, FilePath) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         SpeakerName, SpeakerRole, RequestId, StartedAt, DurationMs, SizeBytes, FilePath) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&new.id)
     .bind(new.group_uid)
@@ -58,6 +68,7 @@ pub async fn insert(db: &MySqlPool, new: &NewRecording<'_>) -> sqlx::Result<()> 
     .bind(new.speaker_email)
     .bind(new.speaker_name)
     .bind(new.speaker_role)
+    .bind(new.request_id)
     .bind(new.started_at)
     .bind(new.duration_ms)
     .bind(new.size_bytes)
@@ -127,4 +138,66 @@ pub async fn soft_delete(db: &MySqlPool, id: &str, now: DateTime<Utc>) -> sqlx::
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// The id of the speaker's newest live recording for a request id (ids are only unique-ish).
+pub async fn find_by_request(
+    db: &MySqlPool,
+    group_uid: &str,
+    speaker_user_id: &str,
+    request_id: &str,
+) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT RecordingUID FROM tkpttrecording WHERE GroupUID = ? AND SpeakerUserId = ? \
+         AND RequestId = ? AND DeletedAt IS NULL ORDER BY StartedAt DESC, RecordingUID DESC LIMIT 1",
+    )
+    .bind(group_uid)
+    .bind(speaker_user_id)
+    .bind(request_id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Device text always wins over whatever is there, including a server transcript.
+pub async fn set_device_transcript(
+    db: &MySqlPool,
+    id: &str,
+    text: &str,
+    locale: Option<&str>,
+    now: DateTime<Utc>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE tkpttrecording SET Transcript = ?, TranscriptLocale = ?, TranscriptAt = ?, \
+         TranscriptSource = 'device', TranscriptStatus = 'done' \
+         WHERE RecordingUID = ? AND DeletedAt IS NULL",
+    )
+    .bind(text)
+    .bind(locale)
+    .bind(now)
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Records that the device could not transcribe, only while nobody has produced anything: never
+/// over text, `processing`, `done`, `no_speech` or `error`.
+pub async fn set_device_status(db: &MySqlPool, id: &str, status: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE tkpttrecording SET TranscriptStatus = ?, TranscriptAttempts = 0 \
+         WHERE RecordingUID = ? AND DeletedAt IS NULL AND Transcript IS NULL \
+         AND (TranscriptStatus IS NULL OR TranscriptStatus IN ('unsupported', 'failed'))",
+    )
+    .bind(status)
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn find_status(db: &MySqlPool, id: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar("SELECT TranscriptStatus FROM tkpttrecording WHERE RecordingUID = ?")
+        .bind(id)
+        .fetch_one(db)
+        .await
 }

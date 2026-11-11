@@ -41,6 +41,9 @@ pub struct TurnMeta {
     pub email: Option<String>,
     pub name: String,
     pub role: String,
+    /// The `requestId` of the FLOOR_REQUEST that won the floor, when it is a string of 1 to 64
+    /// characters; the app uses it to attach a transcript to the recording.
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -203,6 +206,7 @@ impl Recorder {
             speaker_email: meta.email.as_deref(),
             speaker_name: &meta.name,
             speaker_role: &meta.role,
+            request_id: meta.request_id.as_deref(),
             started_at,
             duration_ms: i32::try_from(duration_ms).unwrap_or(i32::MAX),
             size_bytes: i32::try_from(size).unwrap_or(i32::MAX),

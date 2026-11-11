@@ -6,7 +6,7 @@ mod handlers;
 pub(super) mod repository;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, put};
 
 use crate::core::state::AppState;
 
@@ -19,4 +19,8 @@ pub fn router() -> Router<AppState> {
             axum::routing::delete(handlers::remove),
         )
         .route("/ptt/recordings/{id}/audio", get(handlers::audio))
+        .route(
+            "/ptt/recordings/by-request/{id}/transcript",
+            put(handlers::put_transcript),
+        )
 }

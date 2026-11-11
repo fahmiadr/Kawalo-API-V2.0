@@ -345,13 +345,19 @@ impl Session {
             Arc::clone(&self.user_id),
             Arc::clone(&self.socket_id),
         );
-        let recorder = Some(inner.recorder.start_turn(TurnMeta {
-            group: Arc::clone(&self.group),
-            user_id: self.user.sub.clone(),
-            email: self.user.email.clone(),
-            name: self.user.name.clone(),
-            role: self.user.role.clone(),
-        }));
+        let recorder = Some(
+            inner.recorder.start_turn(TurnMeta {
+                group: Arc::clone(&self.group),
+                user_id: self.user.sub.clone(),
+                email: self.user.email.clone(),
+                name: self.user.name.clone(),
+                role: self.user.role.clone(),
+                request_id: request_id
+                    .and_then(Value::as_str)
+                    .filter(|id| (1..=64).contains(&id.chars().count()))
+                    .map(str::to_owned),
+            }),
+        );
         self.room.grant(
             ActiveSpeaker {
                 socket_id: Arc::clone(&self.socket_id),

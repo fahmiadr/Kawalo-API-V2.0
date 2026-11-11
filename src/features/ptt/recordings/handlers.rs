@@ -12,10 +12,13 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-use super::dto::{ListQuery, RecordingItem, RecordingPage, encode_cursor};
+use super::dto::{
+    ListQuery, RecordingItem, RecordingPage, TranscriptBody, TranscriptSaved, TranscriptState,
+    encode_cursor,
+};
 use super::repository::{self, RecordingRow};
 use crate::core::error::ApiError;
-use crate::core::extract::{CurrentUser, ValidatedQuery, ValidationErrors};
+use crate::core::extract::{AuthedJson, CurrentUser, ValidatedQuery, ValidationErrors};
 use crate::core::response::{ApiResult, ok};
 use crate::core::state::AppState;
 
@@ -26,7 +29,8 @@ fn not_found() -> ApiError {
     ApiError::not_found().with_message(MSG_NOT_FOUND)
 }
 
-/// The `{id}` path segment, 1 to 64 characters like the incident id.
+/// The `{id}` path segment (a recording id, or a request id on the transcript route), 1 to 64
+/// characters like the incident id.
 #[derive(Debug)]
 pub struct RecordingId(String);
 
@@ -69,6 +73,70 @@ pub async fn list(
         },
         MESSAGE,
     )
+}
+
+/// Only the speaker of the turn may write, and a recording that is not theirs (or not written
+/// yet, or deleted) is the same 404, so existence does not leak. Device text overwrites any
+/// existing transcript; a failure report only fills an empty one.
+pub async fn put_transcript(
+    request_id: RecordingId,
+    State(state): State<AppState>,
+    AuthedJson(auth, body): AuthedJson<TranscriptBody>,
+) -> ApiResult<TranscriptSaved> {
+    const MESSAGE: &str = "Transkrip berhasil disimpan";
+    let user = auth.require_auth()?;
+    let group_uid = user.require_group_uid()?;
+    let text = clean_transcript(body.text.as_deref());
+    let mut errors = ValidationErrors::new();
+    match (body.status, text.is_empty()) {
+        (TranscriptState::Ok, true) => {
+            errors.push("text", "Expected string length greater or equal to 1")
+        }
+        (TranscriptState::Unsupported | TranscriptState::Failed, false) => {
+            errors.push(
+                "text",
+                "Expected property 'text' to be absent for this status",
+            );
+        }
+        _ => {}
+    }
+    errors
+        .into_result()
+        .map_err(|errors| ApiError::invalid_input(errors.to_string()))?;
+
+    let id = repository::find_by_request(&state.db, group_uid, &user.sub, &request_id.0)
+        .await?
+        .ok_or_else(not_found)?;
+    match body.status {
+        TranscriptState::Ok => {
+            let locale = body
+                .locale
+                .as_deref()
+                .map(str::trim)
+                .filter(|l| !l.is_empty());
+            let now = Utc::now().trunc_subsecs(0);
+            repository::set_device_transcript(&state.db, &id, &text, locale, now).await?;
+        }
+        other => repository::set_device_status(&state.db, &id, other.as_str()).await?,
+    }
+    let transcript_status = repository::find_status(&state.db, &id).await?;
+    ok(
+        TranscriptSaved {
+            id,
+            transcript_status,
+        },
+        MESSAGE,
+    )
+}
+
+/// Trimmed, without control characters other than newline and tab.
+fn clean_transcript(text: Option<&str>) -> String {
+    let kept: String = text
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .collect();
+    kept.trim().to_owned()
 }
 
 /// The active group first, then the token role (not `allow_admin`: real data has guards with that

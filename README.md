@@ -162,7 +162,7 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 | incident | `/incidents`: `GET /`, `POST /`, `GET /:id`, `GET /:id/stream` (SSE), `POST /:id/replies`, `PATCH /:id/resolve`, `DELETE /:id` |
 | ptt | WebSocket `/ws/ptt/:groupUid` (di luar `/api/v1`) |
 | ptt members | `GET /ptt/members` (siapa yang sedang terhubung ke saluran PTT grup aktif) |
-| ptt recordings | `/ptt/recordings`: `GET /?limit=&before=`, `GET /:id/audio`, `DELETE /:id` (hanya peran `ADMIN`/`SUPER_ADMIN`) |
+| ptt recordings | `/ptt/recordings`: `GET /?limit=&before=`, `GET /:id/audio`, `DELETE /:id` (hanya peran `ADMIN`/`SUPER_ADMIN`), `PUT /by-request/:request_id/transcript` (transkrip dari perangkat pembicara) |
 | uploads | `POST /uploads` (multipart, perlu token); `GET /uploads/{yyyy}/{mm}/{uuid}.{ext}` publik, di luar `/api/v1` |
 
 ### Riwayat rekaman PTT (`ptt/recordings`)
@@ -184,11 +184,14 @@ Peran `ADMIN`, `GUARD`, dan `USER` boleh melihat dan memutar. `SUPER_ADMIN` tida
   {"success":true,"message":"Riwayat rekaman PTT berhasil diambil","data":{
     "items":[{"id":"rec_<uuid v7>","speaker":{"id":"<sub token>","name":"Budi","role":"GUARD","email":"budi@contoh.id"},
               "started_at":"2026-11-11T08:15:30.120Z","duration_ms":4820,"size_bytes":10432,
-              "audio_path":"/api/v1/ptt/recordings/rec_<uuid v7>/audio"}],
+              "audio_path":"/api/v1/ptt/recordings/rec_<uuid v7>/audio",
+              "transcript":"siap laksanakan","transcript_locale":"id_ID","transcript_source":"device","transcript_status":"done"}],
     "next_before":"<kursor>"}}
   ```
 
   `next_before` berisi kursor untuk halaman yang lebih lama, atau `null` bila itu halaman terakhir. Urutan `started_at` lalu `id` menurun; waktu mulai = saat lantai diberikan.
+  Empat field transkrip selalu ada dan boleh `null` (field tambahan; klien lama mengabaikannya): `transcript` (teks), `transcript_locale` (mis. `id_ID`), `transcript_source` (`device` atau `server`),
+  `transcript_status` (`null` = belum ada kabar, `done`, `unsupported`, `failed`, `processing`, `no_speech`, `error`).
 * `GET /api/v1/ptt/recordings/{id}/audio`: berkas Ogg/Opus, `Content-Type: audio/ogg`, `Accept-Ranges: bytes`, `Cache-Control: private`. Mendukung satu `Range: bytes=a-b|a-|-n`
   (`206` dengan `Content-Range`; `416` dengan `Content-Range: bytes */total` bila di luar berkas; header Range lain diabaikan dan berkas utuh dikirim). Rekaman grup lain, yang tidak ada, sudah
   dihapus, atau yang berkasnya hilang `404 RESOURCE_NOT_FOUND` ("Rekaman tidak ditemukan."); tanpa token `401`. Berkas dicari hanya dari baris DB dan jalurnya harus tetap di bawah `UPLOAD_DIR`.
@@ -196,6 +199,18 @@ Peran `ADMIN`, `GUARD`, dan `USER` boleh melihat dan memutar. `SUPER_ADMIN` tida
   ("Hanya administrator yang dapat menghapus rekaman."), tidak ada/grup lain/sudah dihapus `404` (jadi hapus kedua `404`), tanpa token `401`. Sukses `200`
   `{"success":true,"message":"Rekaman berhasil dihapus","data":null}`: mengisi `DeletedAt` (baris tetap sebagai nisan) lalu menghapus berkas dengan upaya terbaik (gagal hanya dicatat `warn`).
   Tidak ada hapus massal, pemulihan, retensi otomatis, atau kuota disk.
+
+* `PUT /api/v1/ptt/recordings/by-request/{request_id}/transcript`: perangkat pembicara melaporkan transkrip giliran bicaranya. `request_id` = `requestId` dari frame `FLOOR_REQUEST`; server menyimpannya
+  di kolom `RequestId` hanya bila berupa string 1 sampai 64 karakter (selain itu `NULL`; protokol WebSocket tidak berubah). Body (snake_case):
+  `{"status":"ok"|"unsupported"|"failed","text"?:string,"locale"?:string}`. Rekaman dicari dengan grup token + `SpeakerUserId` = `sub` token + `RequestId`, yang belum dihapus, `started_at` terbaru.
+  Tidak ketemu (belum ditulis karena perekam menulis setelah giliran selesai, milik pembicara lain, atau grup lain, atau sudah dihapus) `404` "Rekaman tidak ditemukan." sehingga klien boleh mencoba lagi; hanya pembicara yang boleh menulis.
+  * `ok`: `text` wajib (dipangkas, karakter kontrol selain baris baru/tab dibuang, 1 sampai 2000 karakter); `locale` opsional 2 sampai 16 karakter (`id_ID`/`id-ID`). Mengisi teks, `transcript_source` `device`,
+    `transcript_status` `done`. Teks perangkat SELALU menimpa transkrip yang ada (dari server atau kiriman perangkat sebelumnya); mengirim teks yang sama lagi idempoten.
+  * `unsupported`/`failed`: tanpa `text`. Hanya mengubah `transcript_status` bila baris belum bertranskrip dan statusnya `NULL`, `unsupported`, atau `failed` (sekaligus `TranscriptAttempts` kembali 0); selain itu
+    (`processing`, `done`, `no_speech`, `error`, atau sudah ada teks) tidak ada perubahan dan tetap `200`.
+  * Sukses `200` `{"success":true,"message":"Transkrip berhasil disimpan","data":{"id":"rec_<uuid v7>","transcript_status":"done"}}`; `transcript_status` adalah status baris SESUDAH pemanggilan (bisa `null` bila tidak ada perubahan).
+    Body tidak valid `422 VALIDATION_ERROR` (status di luar daftar, `ok` tanpa teks, teks pada `unsupported`/`failed`, panjang di luar batas); tanpa grup aktif `400`; tanpa token `401` (body divalidasi lebih dulu seperti rute ber-body lain).
+  * Migrasi `20261111020000_add_ptt_transcript` harus sudah dijalankan: `GET /ptt/recordings` kini ikut membaca kolom transkrip.
 
 ### Anggota saluran PTT (`ptt/members`)
 
@@ -310,3 +325,5 @@ RSS ada di `tools/bench/results/` (`ts-vs-rust`, `perf-ts-vs-rust-after`, `perf-
 * Jalankan migrasi (`npm run prisma:migrate:deploy`) sebelum merilis versi yang membutuhkannya. Migrasi `tkincident*` harus sudah ada di tiap database, kalau tidak endpoint `/incidents` mengembalikan 500; begitu pula `20261110000000_add_user_password_hash` (kolom `tkuser.PasswordHash`), kalau tidak login mengembalikan 500.
 * **Unggahan**: `UPLOAD_DIR` harus volume persisten (di Docker: `/app/uploads`, dimiliki user `kawalo`), dicadangkan, dan dipantau kuotanya; berkas tidak pernah dihapus otomatis. Set `PUBLIC_BASE_URL` ke origin publik (https); bila kosong URL mengikuti header `Host`. Bila ada beberapa instance, semuanya harus berbagi volume yang sama.
 * Liveness `GET /health`, readiness `GET /health/ready`. Pada `SIGTERM`/`SIGINT` server menutup koneksi dengan tenggang 10 detik.
+
+Worker transkrip PTT (proses terpisah, whisper.cpp): lihat [`docs/ptt-transcriber.md`](docs/ptt-transcriber.md).
