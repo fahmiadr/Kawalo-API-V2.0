@@ -16,6 +16,7 @@ use axum::routing::get;
 use crate::core::state::AppState;
 
 mod frames;
+pub mod recording;
 mod registry;
 mod relay;
 mod session;
