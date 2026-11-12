@@ -53,8 +53,8 @@ Opsi (belum dikerjakan): memindahkan migrasi ke `sqlx migrate` akan menghilangka
 
 ## Password: Argon2id dengan upgrade transparan
 
-`tkuser.Password` (VARCHAR(64)) masih berisi plaintext karena sistem lain mungkin membaca dan **mengubahnya**; API tidak pernah mengubah,
-menimpa, atau mengosongkan kolom itu. Migrasi `20261110000000_add_user_password_hash` menambah kolom `tkuser.PasswordHash`
+`tkuser.Password` (VARCHAR(64)) masih berisi plaintext karena sistem lain mungkin membaca dan **mengubahnya**; API tidak pernah mengosongkan
+kolom itu dan hanya menulisnya lewat `POST /auth/change-password` (lihat di bawah). Migrasi `20261110000000_add_user_password_hash` menambah kolom `tkuser.PasswordHash`
 (`VARCHAR(255) NULL`, `ADD COLUMN IF NOT EXISTS`, jadi aman diulang) berisi string PHC `$argon2id$v=19$m=19456,t=2,p=1$...`
 (parameter minimum OWASP; string PHC menyimpan parameternya, jadi menaikkan parameter nanti tidak merusak hash lama).
 
@@ -71,7 +71,14 @@ memutuskan begini (`src/features/auth/password_check.rs`):
 
 Penolakan selalu 401 yang sama dan dihitung oleh pembatas login/penguncian seperti biasa. Kondisi `BINARY Password = ...` mencegah hash basi bila password
 diganti di sela-sela baca dan tulis. Gagal menyimpan hash hanya menulis peringatan di log; login tetap berhasil. Hash yang bukan string PHC valid diperlakukan
-sebagai tidak cocok (dan diganti saat plaintext cocok). Kolom `Password` tidak pernah ditulis.
+sebagai tidak cocok (dan diganti saat plaintext cocok). Login tidak pernah menulis kolom `Password`.
+
+**Ganti password (`POST /auth/change-password`, body `current_password`, `new_password`).** Password saat ini diverifikasi persis seperti login
+(`verify_login`); salah = 403 `AUTH_INVALID_CREDENTIALS` "Password saat ini salah." (bukan 401, karena app menganggap 401 sebagai sesi berakhir)
+dan dihitung oleh penguncian akun yang sama dengan login (5 gagal = 429 `AUTH_ACCOUNT_LOCKED` 15 menit, di sini dan di login). Password baru
+di-trim, 8 sampai 64 karakter (batas kolom `Password`), harus beda dari yang lama. Berhasil: `PasswordHash` = Argon2id baru dan `Password` = plaintext
+baru agar konsumen lama tetap jalan (bila `Password` sudah dikosongkan/fase 2, tetap kosong), lalu `session_ver` dinaikkan dan semua refresh token
+pengguna dicabut, jadi semua sesi termasuk sesi pemanggil harus login ulang.
 
 Biaya: satu verifikasi Argon2id (~19 MiB, puluhan ms CPU) per login selama fase 1, di thread blocking di balik semaphore sebanyak jumlah core
 (pola yang sama dengan penandatanganan RSA). Setiap login gagal juga menghabiskan satu verifikasi, nyata atau dummy (hash tetap dengan parameter saat ini),

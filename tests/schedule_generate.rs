@@ -289,6 +289,34 @@ async fn omitted_personnel_defaults_to_the_guards() {
 }
 
 #[tokio::test]
+async fn per_personnel_carries_the_cleaned_avatar() {
+    let f = fixture().await;
+    for (member, pic) in [(0, "https://cdn.test/m0.webp"), (1, "null")] {
+        sqlx::query("UPDATE tkuser SET UserProfilePic = ? WHERE UserEmail = ?")
+            .bind(pic)
+            .bind(&f.members[member])
+            .execute(&f.app.state.db)
+            .await
+            .expect("set picture");
+    }
+    let preview = f.preview(&f.body(0, 3)).await;
+    let people = preview["stats"]["per_personnel"]
+        .as_array()
+        .expect("per_personnel");
+    let avatar = |email: &str| {
+        people
+            .iter()
+            .find(|p| p["email"] == email)
+            .map(|p| p["avatar_url"].clone())
+    };
+    assert_eq!(
+        avatar(&f.members[0]),
+        Some(json!("https://cdn.test/m0.webp"))
+    );
+    assert_eq!(avatar(&f.members[1]), Some(Value::Null));
+}
+
+#[tokio::test]
 async fn rejects_bad_ranges_shifts_and_people() {
     let f = fixture().await;
     let db = &f.app.state.db;

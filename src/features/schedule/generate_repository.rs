@@ -42,13 +42,20 @@ pub async fn shifts(
 pub struct Member {
     pub email: String,
     pub name: String,
+    pub avatar_url: Option<String>,
     pub role: String,
 }
 
 /// JOINED members of the group, sorted by email; the name falls back to the email.
 pub async fn members(conn: &mut MySqlConnection, group_uid: &str) -> sqlx::Result<Vec<Member>> {
-    let rows: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ug.Email, u.UserName, ug.Category FROM tkusergroup ug \
+    type Row = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT ug.Email, u.UserName, u.UserProfilePic, ug.Category FROM tkusergroup ug \
          LEFT JOIN tkuser u ON u.UserEmail = ug.Email \
          WHERE ug.GroupUID = ? AND ug.Status = 'JOINED' ORDER BY ug.Email",
     )
@@ -57,10 +64,11 @@ pub async fn members(conn: &mut MySqlConnection, group_uid: &str) -> sqlx::Resul
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(email, name, role)| {
+        .filter_map(|(email, name, avatar, role)| {
             let email = clean_string(email.as_deref())?;
             Some(Member {
                 name: clean_string(name.as_deref()).unwrap_or_else(|| email.clone()),
+                avatar_url: clean_string(avatar.as_deref()),
                 role: role.unwrap_or_default().trim().to_uppercase(),
                 email,
             })

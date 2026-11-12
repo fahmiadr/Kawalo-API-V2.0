@@ -255,7 +255,7 @@ async fn store(root: &Path, format: Format, data: &[u8]) -> io::Result<String> {
 }
 
 /// `PUBLIC_BASE_URL`, else `http://{Host}` (development fallback).
-fn base_url(config: &Config, headers: &HeaderMap) -> String {
+pub(super) fn base_url(config: &Config, headers: &HeaderMap) -> String {
     if !config.public_base_url.is_empty() {
         return config.public_base_url.clone();
     }

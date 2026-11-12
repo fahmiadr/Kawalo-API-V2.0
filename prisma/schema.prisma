@@ -497,9 +497,9 @@ model tkuser {
   UserUID            String   @db.VarChar(64)
   UserEmail          String   @unique(map: "Email") @db.VarChar(128)
   UserName           String   @db.VarChar(128)
-  // CATATAN: Password masih plaintext demi kompatibilitas sistem legacy dan tidak pernah diubah oleh API.
-  // PasswordHash (Argon2id, format PHC) diisi saat login berhasil pertama; bila terisi, ia menjadi
-  // sumber kebenaran login dan Password diabaikan oleh API.
+  // Password is still plain text for legacy consumers; the API writes it only on change-password
+  // (README, "Password: Argon2id"). PasswordHash (Argon2id PHC) shadows it and decides alone once
+  // Password is emptied (phase 2).
   Password           String   @db.VarChar(64)
   PasswordHash       String?  @db.VarChar(255)
   FCMID              String   @default("none") @db.VarChar(512)

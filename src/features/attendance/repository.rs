@@ -244,6 +244,7 @@ fn to_item(
             .and_then(|u| clean_string(u.name.as_deref()))
             .or_else(|| clean_string(record.name.as_deref())),
         user_profile_pic: user.and_then(|u| clean_string(u.pic.as_deref())),
+        avatar_url: user.and_then(|u| clean_string(u.pic.as_deref())),
         user_duty: user.and_then(|u| clean_string(u.duty.as_deref())),
         user_email,
         attendance_dt: clean_timestamp_text(record.taken_at.as_deref()),

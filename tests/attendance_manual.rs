@@ -190,6 +190,24 @@ async fn mismatches_are_counted_per_day_and_cleared_by_a_success() {
     assert_eq!(nonce(&f.app, &f.token).await["failed_attempts"], 0);
 }
 
+/// Three mismatches only unlock "Lapor ke admin"; they never block further attempts.
+#[tokio::test]
+async fn attempts_are_never_blocked_after_three_mismatches() {
+    let f = fixture().await;
+    fail_three_times(&f).await;
+    let (code, body) = check(&f, GREEN).await;
+    assert_eq!(code, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error_code"], "FACE_NOT_MATCH");
+    assert_eq!(body["data"]["failed_attempts"], 4);
+    let (code, body) = check(&f, RED).await;
+    assert_eq!(
+        code,
+        StatusCode::CREATED,
+        "fifth attempt with the right face: {body}"
+    );
+    assert_eq!(nonce(&f.app, &f.token).await["failed_attempts"], 0);
+}
+
 #[tokio::test]
 async fn face_failed_needs_three_mismatches_but_camera_does_not() {
     let f = fixture().await;
@@ -301,6 +319,18 @@ async fn admins_of_the_group_list_and_filter() {
     assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(body["data"].as_array().expect("list").len(), 1);
     assert_eq!(body["data"][0]["id"], id.as_str());
+    assert_eq!(body["data"][0]["avatar_url"], Value::Null, "no tkuser row");
+    sqlx::query(
+        "INSERT INTO tkuser (UserUID, UserEmail, UserName, Password, UserProfilePic) \
+         VALUES (?, ?, 'Satpam', 'x', 'https://cdn.test/g.webp')",
+    )
+    .bind(unique())
+    .bind(&f.email)
+    .execute(&f.app.state.db)
+    .await
+    .expect("insert user");
+    let (_, body) = f.app.call("GET", REQUESTS, Some(&f.admin), None).await;
+    assert_eq!(body["data"][0]["avatar_url"], "https://cdn.test/g.webp");
     for (status, count) in [("PENDING", 1), ("APPROVED", 0), ("REJECTED", 0)] {
         let (_, body) = f
             .app

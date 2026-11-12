@@ -154,6 +154,8 @@ mod attendance {
         let siti = format!("siti.{tag}@test.id");
         insert_group(db, &group, &format!("Grup {tag}")).await;
         insert_user(db, &budi, "Budi Santoso", Some("budi.jpg"), "ON DUTY").await;
+        // A legacy "unset" picture must come out as null under both names.
+        insert_user(db, &siti, "Siti", Some("null"), "OFF DUTY").await;
         sqlx::query(
             "INSERT INTO tkshift (ShiftName, ShiftTimeStart, ShiftTimeStart_mm, ShiftTimeStop, \
              ShiftTimeStop_mm, ShiftGroupUID, ShiftColor, ShiftUID) VALUES (?, 7, 5, 15, 30, ?, '#112233', ?)",
@@ -266,6 +268,7 @@ mod attendance {
         assert_eq!(siti["category"], "pulang");
         assert_eq!(siti["user_name"], "Siti");
         assert_eq!(siti["user_profile_pic"], Value::Null);
+        assert_eq!(siti["avatar_url"], Value::Null);
         assert_eq!(siti["latitude"], Value::Null);
         assert_eq!(siti["location_name"], Value::Null);
         assert_eq!(siti["shift_time_window"], "07:30:00");
@@ -278,6 +281,7 @@ mod attendance {
                 "user_email": f.budi,
                 "user_name": "Budi Santoso",
                 "user_profile_pic": "budi.jpg",
+                "avatar_url": "budi.jpg",
                 "user_duty": "ON DUTY",
                 "attendance_dt": "2026-09-18T08:00:00.000Z",
                 "attendance_type": "CHECK IN",
@@ -803,7 +807,14 @@ mod group_members {
             "OFF DUTY",
         )
         .await;
-        insert_user(db, &email("ahmad"), "ahmad Zulkifli", None, "OFF DUTY").await;
+        insert_user(
+            db,
+            &email("ahmad"),
+            "ahmad Zulkifli",
+            Some("N/A"),
+            "OFF DUTY",
+        )
+        .await;
         insert_user(db, &email("pending"), "Menunggu", None, "OFF DUTY").await;
         insert_user(db, &email("lain"), "Anggota Lain", None, "OFF DUTY").await;
         insert_user(db, &email("namakosong"), "N/A", None, "OFF DUTY").await;
@@ -825,10 +836,10 @@ mod group_members {
         assert_eq!(
             body["data"],
             json!([
-                {"email": email("ahmad"), "name": "ahmad Zulkifli", "profilePic": null, "role": "GUARD"},
-                {"email": email("candra"), "name": "Candra", "profilePic": "candra.png", "role": "ADMIN"},
-                {"email": email("namakosong"), "name": null, "profilePic": null, "role": "USER"},
-                {"email": email("tanpaprofil"), "name": null, "profilePic": null, "role": "USER"},
+                {"email": email("ahmad"), "name": "ahmad Zulkifli", "profilePic": null, "avatar_url": null, "role": "GUARD"},
+                {"email": email("candra"), "name": "Candra", "profilePic": "candra.png", "avatar_url": "candra.png", "role": "ADMIN"},
+                {"email": email("namakosong"), "name": null, "profilePic": null, "avatar_url": null, "role": "USER"},
+                {"email": email("tanpaprofil"), "name": null, "profilePic": null, "avatar_url": null, "role": "USER"},
             ])
         );
     }

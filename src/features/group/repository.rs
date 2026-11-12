@@ -54,6 +54,7 @@ pub async fn members(pool: &MySqlPool, group_uid: &str) -> Result<Vec<MemberItem
             MemberItem {
                 email,
                 name,
+                avatar_url: profile_pic.clone(),
                 profile_pic,
                 role,
             }

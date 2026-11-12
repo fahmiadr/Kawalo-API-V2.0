@@ -289,6 +289,26 @@ impl Sessions {
         pipe.query_async::<()>(&mut redis).await
     }
 
+    /// Deletes every live refresh token of a user (password change). Family indexes are left to
+    /// expire: they only point at sessions that no longer exist.
+    ///
+    /// # Errors
+    /// Redis errors.
+    pub async fn revoke_user(&self, user_id: &str) -> RedisResult<()> {
+        let Some(user_id) = clean_string(Some(user_id)) else {
+            return Ok(());
+        };
+        let index = user_key(&user_id);
+        let mut redis = self.redis.clone();
+        let hashes: Vec<String> = redis.zrange(&index, 0, -1).await?;
+        let mut pipe = redis::pipe();
+        for hash in &hashes {
+            pipe.del(session_key(hash)).ignore();
+        }
+        pipe.del(&index).ignore();
+        pipe.query_async::<()>(&mut redis).await
+    }
+
     /// Deletes one session, and drops it from the user's index when `user_id` is known.
     ///
     /// # Errors

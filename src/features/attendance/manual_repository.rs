@@ -33,6 +33,7 @@ pub struct Row {
     pub note: Option<String>,
     pub user_email: String,
     pub user_name: String,
+    pub avatar: Option<String>,
     pub absen_type: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -52,7 +53,9 @@ pub struct Row {
 }
 
 const SELECT: &str = "SELECT ManualId AS id, Status AS status, Reason AS reason, Note AS note, \
-    UserEmail AS user_email, UserName AS user_name, AbsenType AS absen_type, \
+    UserEmail AS user_email, UserName AS user_name, \
+    (SELECT u.UserProfilePic FROM tkuser u WHERE u.UserEmail = tkattendancemanual.UserEmail) \
+    AS avatar, AbsenType AS absen_type, \
     Latitude AS latitude, Longitude AS longitude, DistanceM AS distance_m, RadiusM AS radius_m, \
     ScheduleId AS schedule_id, ShiftUID AS shift_uid, ShiftName AS shift_name, \
     ShiftWindow AS shift_window, LocName AS loc_name, FailedAttempts AS failed_attempts, \

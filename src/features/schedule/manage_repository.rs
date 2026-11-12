@@ -360,6 +360,7 @@ struct ItemRow {
     year: i32,
     email: String,
     name: String,
+    avatar: Option<String>,
     is_member: i64,
     shift_uid: Option<String>,
     shift_name: Option<String>,
@@ -387,6 +388,7 @@ fn into_item(row: ItemRow, today: NaiveDate) -> Option<ManagedItem> {
         date: date.format("%Y-%m-%d").to_string(),
         name: clean_string(Some(&row.name)).unwrap_or_else(|| row.email.clone()),
         email: row.email,
+        avatar_url: clean_string(row.avatar.as_deref()),
         is_member: row.is_member != 0,
         shift_uid: row.shift_uid,
         shift_name: row.shift_name,
@@ -419,7 +421,7 @@ pub async fn items(
 ) -> Result<Vec<ManagedItem>, sqlx::Error> {
     let mut query = QueryBuilder::<MySql>::new(
         "SELECT s.SchedId AS id, s.SDate AS day, s.SMonth AS month, s.SYear AS year, \
-         s.SFriendEmail AS email, s.SFriendName AS name, \
+         s.SFriendEmail AS email, s.SFriendName AS name, u.UserProfilePic AS avatar, \
          CAST(EXISTS(SELECT 1 FROM tkusergroup g WHERE g.GroupUID = s.SGroupUID \
          AND g.Email = s.SFriendEmail AND g.Status = 'JOINED') AS SIGNED) AS is_member, \
          h.ShiftUID AS shift_uid, h.ShiftName AS shift_name, h.ShiftColor AS shift_color, \
@@ -428,6 +430,7 @@ pub async fn items(
          s.ACheckin AS checkin, s.ACheckout AS checkout, s.LateMins AS late_mins \
          FROM tkschedule s \
          LEFT JOIN tkshift h ON h.ShiftUID = s.SchedShiftUID AND h.ShiftGroupUID = s.SGroupUID \
+         LEFT JOIN tkuser u ON u.UserEmail = s.SFriendEmail \
          WHERE s.SGroupUID = ",
     );
     query.push_bind(group);

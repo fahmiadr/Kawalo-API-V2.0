@@ -87,6 +87,7 @@ pub struct ShiftSpec {
 pub struct Person {
     pub email: String,
     pub name: String,
+    pub avatar_url: Option<String>,
 }
 
 /// A schedule row already in the database, in or shortly before the range.
@@ -137,6 +138,7 @@ pub struct ShiftStat {
 pub struct PersonStat {
     pub email: String,
     pub name: String,
+    pub avatar_url: Option<String>,
     pub total: u32,
 }
 
@@ -409,6 +411,7 @@ pub fn generate(input: &Input<'_>) -> Plan {
         .map(|(p, st)| PersonStat {
             email: p.email.clone(),
             name: p.name.clone(),
+            avatar_url: p.avatar_url.clone(),
             total: st.assigned,
         })
         .collect();
@@ -459,6 +462,7 @@ mod tests {
             .map(|n| Person {
                 email: format!("{n}@t.id"),
                 name: n.to_uppercase(),
+                avatar_url: None,
             })
             .collect()
     }

@@ -22,6 +22,7 @@ pub struct ManagedItem {
     pub date: String,
     pub email: String,
     pub name: String,
+    pub avatar_url: Option<String>,
     pub is_member: bool,
     pub shift_uid: Option<String>,
     pub shift_name: Option<String>,

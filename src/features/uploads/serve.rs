@@ -21,7 +21,7 @@ fn not_found() -> ApiError {
 
 /// Accepts exactly the paths the uploader produces: `yyyy`, `01`..`12`, and a lower-case
 /// hyphenated UUID v4 plus a known extension. Anything else (`..`, separators, dot files) is a 404.
-fn parse(year: &str, month: &str, name: &str) -> Option<Format> {
+pub(super) fn parse(year: &str, month: &str, name: &str) -> Option<Format> {
     let digits = |s: &str, len: usize| s.len() == len && s.bytes().all(|b| b.is_ascii_digit());
     if !digits(year, 4) || !digits(month, 2) || !(1..=12).contains(&month.parse::<u8>().ok()?) {
         return None;

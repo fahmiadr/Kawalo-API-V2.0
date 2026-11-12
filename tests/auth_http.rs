@@ -1462,3 +1462,297 @@ mod routing {
         assert_eq!(body["error_code"], "RESOURCE_NOT_FOUND");
     }
 }
+
+mod avatar {
+    use super::*;
+
+    const BASE: &str = "https://api.kawalo.test";
+
+    async fn start(dir: &std::path::Path) -> TestApp {
+        let root = dir.to_owned();
+        TestApp::start_with(move |config| {
+            config.upload_dir = root;
+            config.public_base_url = BASE.to_owned();
+        })
+        .await
+    }
+
+    /// A stored upload as `POST /uploads` would leave it; returns its public URL.
+    fn stored(dir: &std::path::Path, ext: &str) -> String {
+        let name = format!("{}.{ext}", Uuid::new_v4());
+        let month = dir.join("2026").join("11");
+        std::fs::create_dir_all(&month).expect("dir");
+        std::fs::write(month.join(&name), b"RIFF").expect("file");
+        format!("{BASE}/uploads/2026/11/{name}")
+    }
+
+    async fn put(app: &TestApp, token: Option<&str>, body: &Value) -> (StatusCode, Value) {
+        app.call("PUT", "/api/v1/auth/me/avatar", token, Some(body))
+            .await
+    }
+
+    async fn column(app: &TestApp, user_id: u64) -> Option<String> {
+        sqlx::query_scalar("SELECT UserProfilePic FROM tkuser WHERE UserId = ?")
+            .bind(user_id)
+            .fetch_one(&app.state.db)
+            .await
+            .expect("select")
+    }
+
+    #[tokio::test]
+    async fn sets_and_clears_the_own_avatar_and_login_returns_it() {
+        let dir = tempfile::tempdir().expect("dir");
+        let app = start(dir.path()).await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, _, _) = client.login_ok(&seeded.email, None).await;
+        let url = stored(dir.path(), "webp");
+
+        let (status, body) = put(&app, Some(&access), &json!({"avatar_url": url})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["message"], "Foto profil berhasil diperbarui");
+        assert_eq!(body["data"], json!({"avatar_url": url}));
+        assert_eq!(
+            column(&app, seeded.user_id).await.as_deref(),
+            Some(url.as_str())
+        );
+        let (_, _, data) = client.login_ok(&seeded.email, None).await;
+        assert_eq!(data["user"]["avatar_url"], url.as_str());
+
+        let (status, body) = put(&app, Some(&access), &json!({"avatar_url": null})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["message"], "Foto profil berhasil dihapus");
+        assert_eq!(body["data"], json!({"avatar_url": null}));
+        assert_eq!(column(&app, seeded.user_id).await, None);
+    }
+
+    #[tokio::test]
+    async fn only_existing_images_of_this_upload_store_are_accepted() {
+        let dir = tempfile::tempdir().expect("dir");
+        let app = start(dir.path()).await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, _, _) = client.login_ok(&seeded.email, None).await;
+        let good = stored(dir.path(), "webp");
+        let missing = format!("{BASE}/uploads/2026/11/{}.webp", Uuid::new_v4());
+        let pdf = stored(dir.path(), "pdf");
+        let long = format!("{good}{}", "a".repeat(2048));
+
+        for bad in [
+            good.replace(BASE, "https://evil.test"),
+            good.replace("https://", "http://"),
+            format!("{good}?v=1"),
+            missing,
+            pdf,
+            long,
+            "N/A".to_owned(),
+            String::new(),
+        ] {
+            let (status, body) = put(&app, Some(&access), &json!({"avatar_url": bad})).await;
+            assert_error(
+                &(status, body),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                "URL foto profil tidak valid.",
+            );
+        }
+        assert_eq!(column(&app, seeded.user_id).await, None);
+    }
+
+    #[tokio::test]
+    async fn body_is_validated_before_auth_and_the_key_is_required() {
+        let dir = tempfile::tempdir().expect("dir");
+        let app = start(dir.path()).await;
+        for body in [json!({}), json!({"avatar_url": 5})] {
+            let (status, json) = put(&app, None, &body).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}: {json}");
+        }
+        let (status, json) = put(&app, None, &json!({"avatar_url": null})).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{json}");
+    }
+}
+
+mod change_password {
+    use super::*;
+
+    const NEW: &str = "sandi-baru-123";
+
+    async fn change(
+        client: &Client<'_>,
+        token: Option<&str>,
+        current: &str,
+        new: &str,
+    ) -> (StatusCode, Value) {
+        client
+            .post(
+                "/change-password",
+                token,
+                &json!({"current_password": current, "new_password": new}),
+            )
+            .await
+    }
+
+    async fn columns(app: &TestApp, user_id: u64) -> (String, Option<String>) {
+        sqlx::query_as("SELECT Password, PasswordHash FROM tkuser WHERE UserId = ?")
+            .bind(user_id)
+            .fetch_one(&app.state.db)
+            .await
+            .expect("select")
+    }
+
+    #[tokio::test]
+    async fn changes_both_columns_and_ends_every_session() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, refresh, _) = client.login_ok(&seeded.email, None).await;
+        let (_, other_refresh, _) = client.login_ok(&seeded.email, None).await;
+
+        let (status, body) = change(&client, Some(&access), &format!(" {PASSWORD} "), NEW).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body,
+            json!({
+                "success": true,
+                "message": "Password berhasil diubah. Silakan login kembali.",
+                "data": null,
+            })
+        );
+
+        let (plaintext, hash) = columns(&app, seeded.user_id).await;
+        assert_eq!(plaintext, NEW, "legacy readers still use the plain text");
+        let hash = hash.expect("hash");
+        assert!(hash.starts_with("$argon2id$"), "{hash}");
+        assert!(kawalo_api::core::security::password::verify_password(&hash, NEW).expect("verify"));
+
+        // The caller's own access token and both refresh tokens are dead.
+        let stale = app
+            .call("GET", "/api/v1/groups/members", Some(&access), None)
+            .await;
+        assert_error(
+            &stale,
+            StatusCode::UNAUTHORIZED,
+            "AUTH_SESSION_STALE",
+            "Sesi telah diperbarui di sistem. Silakan perbarui sesi Anda.",
+        );
+        for token in [&refresh, &other_refresh] {
+            let refreshed = client.refresh(token).await;
+            assert_eq!(refreshed.0, StatusCode::UNAUTHORIZED, "{}", refreshed.1);
+            assert_eq!(refreshed.1["error_code"], "AUTH_TOKEN_INVALID");
+        }
+        let index: Vec<String> = redis_conn(&app)
+            .await
+            .zrange(format!("auth:user:{}:sessions", seeded.user_id), 0, -1)
+            .await
+            .expect("zrange");
+        assert!(index.is_empty(), "{index:?}");
+
+        let old = client.login(&seeded.email, PASSWORD, None).await;
+        assert_error(
+            &old,
+            StatusCode::UNAUTHORIZED,
+            "AUTH_INVALID_CREDENTIALS",
+            WRONG_CREDENTIALS,
+        );
+        let (status, body) = client.login(&seeded.email, NEW, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn wrong_current_password_is_403_counted_and_locks_like_login() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, _, _) = client.login_ok(&seeded.email, None).await;
+
+        let wrong = change(&client, Some(&access), "salah-sekali", NEW).await;
+        assert_error(
+            &wrong,
+            StatusCode::FORBIDDEN,
+            "AUTH_INVALID_CREDENTIALS",
+            "Password saat ini salah.",
+        );
+        let mut redis = redis_conn(&app).await;
+        let fails: Option<i64> = redis
+            .get(format!("rl:login:email:fails:{}", seeded.email))
+            .await
+            .expect("fails");
+        assert_eq!(fails, Some(1));
+
+        for _ in 1..app.state.config.auth.login_max_failed_attempts {
+            let (status, _) = change(&client, Some(&access), "salah-sekali", NEW).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+        // Locked now, here and at login, even with the right password; the session survives.
+        let locked = change(&client, Some(&access), PASSWORD, NEW).await;
+        assert_eq!(locked.0, StatusCode::TOO_MANY_REQUESTS, "{}", locked.1);
+        assert_eq!(locked.1["error_code"], "AUTH_ACCOUNT_LOCKED");
+        let login = client.login(&seeded.email, PASSWORD, None).await;
+        assert_eq!(login.1["error_code"], "AUTH_ACCOUNT_LOCKED");
+        let (status, _) = app
+            .call("GET", "/api/v1/groups/members", Some(&access), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(columns(&app, seeded.user_id).await.0, PASSWORD);
+    }
+
+    #[tokio::test]
+    async fn rejects_bad_new_passwords_without_touching_anything() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, _, _) = client.login_ok(&seeded.email, None).await;
+        let length = "Password baru harus 8 sampai 64 karakter.";
+        for (new, message) in [
+            ("pendek7", length),
+            ("   pendek7   ", length),
+            (&*"a".repeat(65), length),
+            (
+                PASSWORD,
+                "Password baru harus berbeda dari password saat ini.",
+            ),
+        ] {
+            let result = change(&client, Some(&access), PASSWORD, new).await;
+            assert_error(
+                &result,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                message,
+            );
+        }
+        let (status, body) = change(&client, Some(&access), PASSWORD, &"a".repeat(64)).await;
+        assert_eq!(status, StatusCode::OK, "64 characters fit: {body}");
+    }
+
+    #[tokio::test]
+    async fn body_is_validated_before_auth() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let (status, _) = client
+            .post("/change-password", None, &json!({"current_password": "x"}))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let (status, _) = change(&client, None, PASSWORD, NEW).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_emptied_plaintext_stays_empty() {
+        let app = TestApp::start().await;
+        let client = Client::new(&app);
+        let seeded = seed(&app, &[("JOINED", "GUARD")]).await;
+        let (access, _, _) = client.login_ok(&seeded.email, None).await;
+        // The login stored the hash; phase 2 empties the plain text.
+        sqlx::query("UPDATE tkuser SET Password = '' WHERE UserId = ?")
+            .bind(seeded.user_id)
+            .execute(&app.state.db)
+            .await
+            .expect("empty");
+
+        let (status, body) = change(&client, Some(&access), PASSWORD, NEW).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(columns(&app, seeded.user_id).await.0, "");
+        let (status, body) = client.login(&seeded.email, NEW, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+}

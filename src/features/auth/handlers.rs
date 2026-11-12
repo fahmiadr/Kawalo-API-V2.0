@@ -1,9 +1,9 @@
-//! Login, refresh, group switch and logout.
+//! Login, refresh, group switch, logout, own avatar and password change.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 
 use crate::core::clean::clean_string;
 use crate::core::client_ip::ClientIp;
@@ -11,23 +11,31 @@ use crate::core::constants::AUTH_TOKEN_TYPE;
 use crate::core::error::{ApiError, ErrorCode};
 use crate::core::extract::{Auth, AuthedJson, ValidatedJson};
 use crate::core::response::{ApiResult, ok};
+use crate::core::security::password::hash_password_blocking;
 use crate::core::security::{
     JwtUserPayload, generate_refresh_token, hash_token, sign_access_token_blocking,
 };
 use crate::core::state::AppState;
 use crate::features::auth::dto::{
-    LoginBody, LoginData, LogoutBody, RefreshBody, SwitchGroupBody, Tokens,
+    AvatarBody, AvatarData, ChangePasswordBody, LoginBody, LoginData, LogoutBody, RefreshBody,
+    SwitchGroupBody, Tokens,
 };
 use crate::features::auth::login_limiter::LoginLimiter;
 use crate::features::auth::password_check::verify_login;
 use crate::features::auth::sessions::{RefreshSession, Sessions, now_unix};
 use crate::features::auth::user::{self, GroupAccess, User};
+use crate::features::uploads::own_image_path;
 
 const MSG_NOT_MEMBER: &str = "Anda tidak terdaftar sebagai anggota pada grup yang dipilih";
 const MSG_INACTIVE: &str =
     "Akun Anda belum aktif atau belum disetujui. Silakan hubungi administrator Anda.";
 const MSG_USER_NOT_FOUND: &str = "Pengguna tidak ditemukan";
 const LOCK_SECONDS: u64 = 5;
+const MSG_BAD_AVATAR: &str = "URL foto profil tidak valid.";
+const MAX_AVATAR_URL_LEN: usize = 2048;
+const MSG_WRONG_CURRENT: &str = "Password saat ini salah.";
+/// `tkuser.Password` is VARCHAR(64) and still kept in sync for legacy consumers.
+const NEW_PASSWORD_CHARS: std::ops::RangeInclusive<usize> = 8..=64;
 
 fn forbidden(message: &str, code: ErrorCode) -> ApiError {
     ApiError::auth()
@@ -38,6 +46,12 @@ fn forbidden(message: &str, code: ErrorCode) -> ApiError {
 
 fn unauthorized(message: &str, code: ErrorCode) -> ApiError {
     ApiError::auth().with_code(code).with_message(message)
+}
+
+fn unprocessable(message: impl Into<String>) -> ApiError {
+    ApiError::validation()
+        .with_status(StatusCode::UNPROCESSABLE_ENTITY)
+        .with_message(message)
 }
 
 fn user_not_found() -> ApiError {
@@ -296,4 +310,105 @@ pub async fn logout(
         state.sessions.increment_version(user_id).await?;
     }
     ok((), "Logout berhasil")
+}
+
+/// Sets or clears the caller's own profile photo; only images uploaded to this server are taken.
+pub async fn update_avatar(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AuthedJson(auth, body): AuthedJson<AvatarBody>,
+) -> ApiResult<AvatarData> {
+    let caller = auth.require_auth()?;
+    let avatar_url = match body.avatar_url.as_deref().map(str::trim) {
+        None => None,
+        Some(url) => {
+            let path = Some(url)
+                .filter(|url| url.len() <= MAX_AVATAR_URL_LEN)
+                .and_then(|url| own_image_path(&state.config, &headers, url));
+            let exists = match path {
+                Some(path) => tokio::fs::metadata(path)
+                    .await
+                    .is_ok_and(|meta| meta.is_file()),
+                None => false,
+            };
+            if !exists {
+                return Err(unprocessable(MSG_BAD_AVATAR));
+            }
+            Some(url.to_owned())
+        }
+    };
+    sqlx::query("UPDATE tkuser SET UserProfilePic = ? WHERE UserEmail = ?")
+        .bind(avatar_url.as_deref())
+        .bind(&caller.email)
+        .execute(&state.db)
+        .await?;
+    let message = if avatar_url.is_some() {
+        "Foto profil berhasil diperbarui"
+    } else {
+        "Foto profil berhasil dihapus"
+    };
+    ok(AvatarData { avatar_url }, message)
+}
+
+/// Changes the caller's password after checking the current one exactly like login does, then
+/// ends every session (refresh tokens and access tokens, the caller's own included).
+///
+/// A wrong current password is 403, not 401, because clients treat 401 as an expired session.
+/// Failures feed the login lockout of the account, so guessing here and at login share one budget.
+pub async fn change_password(
+    State(state): State<AppState>,
+    AuthedJson(auth, body): AuthedJson<ChangePasswordBody>,
+) -> ApiResult<()> {
+    let caller = auth.require_auth()?;
+    let current = body.current_password.trim();
+    let new = body.new_password.trim();
+    if !NEW_PASSWORD_CHARS.contains(&new.chars().count()) {
+        return Err(unprocessable(format!(
+            "Password baru harus {} sampai {} karakter.",
+            NEW_PASSWORD_CHARS.start(),
+            NEW_PASSWORD_CHARS.end()
+        )));
+    }
+    if new == current {
+        return Err(unprocessable(
+            "Password baru harus berbeda dari password saat ini.",
+        ));
+    }
+
+    let limiter = LoginLimiter::new(state.redis.clone(), &state.config.auth);
+    if let Some(remaining) = limiter.locked_for(&caller.email).await? {
+        return Err(ApiError::locked(remaining));
+    }
+    let user = user::find_by_email(&state.db, &caller.email, None)
+        .await?
+        .ok_or_else(user_not_found)?;
+    if !verify_login(&state.db, Some(&user), current).await {
+        limiter.record_failure(&caller.email, None).await?;
+        return Err(forbidden(
+            MSG_WRONG_CURRENT,
+            ErrorCode::AuthInvalidCredentials,
+        ));
+    }
+    limiter.reset(&caller.email).await?;
+
+    let phc = hash_password_blocking(new.to_owned())
+        .await
+        .map_err(ApiError::internal)?;
+    // An emptied plain text (phase 2) stays empty; otherwise legacy readers get the new one.
+    let plaintext = user.credential.plaintext.is_some().then_some(new);
+    sqlx::query(
+        "UPDATE tkuser SET Password = COALESCE(?, Password), PasswordHash = ? WHERE UserId = ?",
+    )
+    .bind(plaintext)
+    .bind(&phc)
+    .bind(&user.id)
+    .execute(&state.db)
+    .await?;
+
+    state.sessions.increment_version(&caller.sub).await?;
+    Sessions::new(state.redis.clone())
+        .revoke_user(&user.id)
+        .await?;
+    tracing::info!(email = %user.email, "password changed, all sessions revoked");
+    ok((), "Password berhasil diubah. Silakan login kembali.")
 }

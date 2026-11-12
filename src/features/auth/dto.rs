@@ -64,3 +64,34 @@ pub struct LoginData {
     pub user: User,
     pub tokens: Tokens,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AvatarBody {
+    pub avatar_url: Option<String>,
+}
+
+impl Body for AvatarBody {
+    const SCHEMA: Schema = Schema::new(&[Field::required_nullable(
+        "avatar_url",
+        Kind::text(0, NO_LIMIT),
+    )]);
+}
+
+#[derive(Debug, Serialize)]
+pub struct AvatarData {
+    pub avatar_url: Option<String>,
+}
+
+/// Bounded only against abuse; the real rules on the trimmed value live in the handler.
+#[derive(Deserialize)]
+pub struct ChangePasswordBody {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+impl Body for ChangePasswordBody {
+    const SCHEMA: Schema = Schema::new(&[
+        Field::required("current_password", Kind::text(1, 1024)),
+        Field::required("new_password", Kind::text(1, 1024)),
+    ]);
+}

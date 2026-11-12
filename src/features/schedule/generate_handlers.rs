@@ -115,6 +115,7 @@ async fn resolve_personnel(
     let person = |m: &repo::Member| Person {
         email: m.email.clone(),
         name: m.name.clone(),
+        avatar_url: m.avatar_url.clone(),
     };
     let Some(requested) = body.personnel() else {
         let guards: Vec<Person> = default_selection(&members, |m| &m.role)

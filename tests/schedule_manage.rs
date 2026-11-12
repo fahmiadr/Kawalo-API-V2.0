@@ -170,6 +170,7 @@ async fn create_validates_and_enforces_one_shift_per_day() {
     assert_eq!(item["start_time"], "07:00");
     assert_eq!(item["is_member"], true);
     assert_eq!(item["locked"], false);
+    assert_eq!(item["avatar_url"], Value::Null, "no tkuser row");
 
     let (status, body) = f.create(0, &f.pagi, 2, json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -390,6 +391,18 @@ async fn list_is_scoped_to_the_group_and_filters_by_person_and_shift() {
     let f = fixture().await;
     f.create(0, &f.pagi, 2, json!({})).await;
     f.create(1, &f.malam, 2, json!({})).await;
+    for (member, pic) in [(0, "https://cdn.test/a.webp"), (1, "N/A")] {
+        sqlx::query(
+            "INSERT INTO tkuser (UserUID, UserEmail, UserName, Password, UserProfilePic) \
+             VALUES (?, ?, 'Nama', 'x', ?)",
+        )
+        .bind(unique())
+        .bind(&f.members[member])
+        .bind(pic)
+        .execute(&f.app.state.db)
+        .await
+        .expect("insert user");
+    }
 
     let other = TestApp::start().await;
     let other_group = format!("o{}", unique());
@@ -404,6 +417,17 @@ async fn list_is_scoped_to_the_group_and_filters_by_person_and_shift() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["message"], "Jadwal berhasil diambil");
     assert_eq!(body["data"].as_array().expect("rows").len(), 2);
+    let avatars: Vec<(&Value, &Value)> = body["data"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| (&row["email"], &row["avatar_url"]))
+        .collect();
+    assert!(avatars.contains(&(&json!(f.members[0]), &json!("https://cdn.test/a.webp"))));
+    assert!(
+        avatars.contains(&(&json!(f.members[1]), &Value::Null)),
+        "N/A is cleaned"
+    );
     let (_, body) = f
         .call(
             "GET",

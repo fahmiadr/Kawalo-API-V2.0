@@ -9,6 +9,8 @@ pub struct AttendanceItem {
     pub user_email: Option<String>,
     pub user_name: Option<String>,
     pub user_profile_pic: Option<String>,
+    /// Same value as `user_profile_pic`, under the name the rest of the API uses.
+    pub avatar_url: Option<String>,
     pub user_duty: Option<String>,
     pub attendance_dt: Option<String>,
     pub attendance_type: Option<String>,

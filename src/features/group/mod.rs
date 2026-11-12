@@ -21,6 +21,8 @@ pub struct MemberItem {
     pub name: Option<String>,
     #[serde(rename = "profilePic")]
     pub profile_pic: Option<String>,
+    /// Same value as `profilePic`, under the name the rest of the API uses.
+    pub avatar_url: Option<String>,
     /// Upper-cased `tkusergroup.Category` in this group.
     pub role: String,
 }

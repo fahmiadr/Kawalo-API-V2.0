@@ -111,6 +111,8 @@ enum Presence {
     Optional,
     /// `t.Optional(t.Nullable(..))`.
     Nullable,
+    /// `t.Nullable(..)`: must be present, may be `null`.
+    RequiredNullable,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +135,10 @@ impl Field {
         Self::new(name, kind, Presence::Nullable)
     }
 
+    pub const fn required_nullable(name: &'static str, kind: Kind) -> Self {
+        Self::new(name, kind, Presence::RequiredNullable)
+    }
+
     const fn new(name: &'static str, kind: Kind, presence: Presence) -> Self {
         Self {
             name,
@@ -144,8 +150,8 @@ impl Field {
     fn check(&self, errors: &mut ValidationErrors, value: Option<&Value>) {
         match (value, self.presence) {
             (None, Presence::Optional | Presence::Nullable)
-            | (Some(Value::Null), Presence::Nullable) => {}
-            (_, Presence::Nullable) => {
+            | (Some(Value::Null), Presence::Nullable | Presence::RequiredNullable) => {}
+            (_, Presence::Nullable | Presence::RequiredNullable) => {
                 let mut own = ValidationErrors::new();
                 self.kind.check(&mut own, self.name, value);
                 if !own.is_empty() {
