@@ -21,6 +21,8 @@ pub struct MemberItem {
     pub name: Option<String>,
     #[serde(rename = "profilePic")]
     pub profile_pic: Option<String>,
+    /// Upper-cased `tkusergroup.Category` in this group.
+    pub role: String,
 }
 
 pub fn router() -> Router<AppState> {

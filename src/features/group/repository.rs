@@ -8,18 +8,21 @@ use crate::core::clean::clean_string;
 
 /// Members with status `JOINED`, sorted by display name (email when nameless).
 pub async fn members(pool: &MySqlPool, group_uid: &str) -> Result<Vec<MemberItem>, sqlx::Error> {
-    let rows: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT Email FROM tkusergroup WHERE GroupUID = ? AND Status = 'JOINED'",
+    let rows: Vec<(Option<String>, String)> = sqlx::query_as(
+        "SELECT Email, Category FROM tkusergroup WHERE GroupUID = ? AND Status = 'JOINED'",
     )
     .bind(group_uid)
     .fetch_all(pool)
     .await?;
     let mut seen = HashSet::new();
-    let emails: Vec<String> = rows
+    let memberships: Vec<(String, String)> = rows
         .iter()
-        .filter_map(|email| clean_string(email.as_deref()))
-        .filter(|email| seen.insert(email.clone()))
+        .filter_map(|(email, role)| {
+            Some((clean_string(email.as_deref())?, role.trim().to_uppercase()))
+        })
+        .filter(|(email, _)| seen.insert(email.clone()))
         .collect();
+    let emails: Vec<&String> = memberships.iter().map(|(email, _)| email).collect();
     if emails.is_empty() {
         return Ok(Vec::new());
     }
@@ -44,14 +47,15 @@ pub async fn members(pool: &MySqlPool, group_uid: &str) -> Result<Vec<MemberItem
         })
         .collect();
 
-    let mut members: Vec<MemberItem> = emails
+    let mut members: Vec<MemberItem> = memberships
         .into_iter()
-        .map(|email| {
+        .map(|(email, role)| {
             let (name, profile_pic) = profiles.remove(&email).unwrap_or_default();
             MemberItem {
                 email,
                 name,
                 profile_pic,
+                role,
             }
         })
         .collect();

@@ -23,7 +23,7 @@ struct Row {
     late_mins: i32,
 }
 
-fn date_key(date: NaiveDate) -> i32 {
+pub(super) fn date_key(date: NaiveDate) -> i32 {
     use chrono::Datelike;
     date.year() * 10_000 + i32::try_from(date.month() * 100 + date.day()).unwrap_or(0)
 }
