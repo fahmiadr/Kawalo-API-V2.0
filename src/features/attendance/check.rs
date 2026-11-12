@@ -216,6 +216,11 @@ pub async fn check(
         .map_err(|err| face_error(&err))?;
     let score = cosine(&reference, &probe);
     if score < state.config.faces.match_threshold {
+        tracing::warn!(
+            similarity = score,
+            threshold = state.config.faces.match_threshold,
+            "[Face] check-in mismatch"
+        );
         let failed = manual::count_failure(&state, &user.email).await?;
         let mut progress = manual::progress(failed);
         progress["similarity_percent"] = percent(score).into();
