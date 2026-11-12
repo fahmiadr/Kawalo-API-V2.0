@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::http::StatusCode;
 use chrono::{Datelike, NaiveDate};
+use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
 use sqlx::{FromRow, MySql, MySqlConnection, MySqlPool, QueryBuilder};
 
@@ -32,19 +33,19 @@ pub fn map_write(error: sqlx::Error) -> ApiError {
     }
 }
 
-// The MD5 keeps the lock name within MySQL's 64 character limit for any group uid.
-macro_rules! lock_name {
-    () => {
-        "CONCAT('kawalo:schedule:', MD5(?))"
-    };
+/// Hashed in Rust, not with SQL `MD5()`: the production MySQL 9 build has no such function.
+/// 16 + 32 characters stay within MySQL's 64 character lock-name limit for any group uid.
+fn lock_name(group: &str) -> String {
+    let digest = hex::encode(Sha256::digest(group.as_bytes()));
+    format!("kawalo:schedule:{}", &digest[..32])
 }
 
 /// Serialises writers of one group. Named locks belong to the connection, so the caller must hand
 /// the connection back through [`release_group`] on every path.
 pub async fn lock_group(pool: &MySqlPool, group: &str) -> Result<PoolConnection<MySql>, ApiError> {
     let mut conn = pool.acquire().await?;
-    let got: Option<i64> = sqlx::query_scalar(concat!("SELECT GET_LOCK(", lock_name!(), ", 10)"))
-        .bind(group)
+    let got: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, 10)")
+        .bind(lock_name(group))
         .fetch_one(&mut *conn)
         .await?;
     if got != Some(1) {
@@ -54,8 +55,8 @@ pub async fn lock_group(pool: &MySqlPool, group: &str) -> Result<PoolConnection<
 }
 
 pub async fn release_group(mut conn: PoolConnection<MySql>, group: &str) {
-    let released = sqlx::query(concat!("SELECT RELEASE_LOCK(", lock_name!(), ")"))
-        .bind(group)
+    let released = sqlx::query("SELECT RELEASE_LOCK(?)")
+        .bind(lock_name(group))
         .execute(&mut *conn)
         .await;
     if released.is_err() {
@@ -459,4 +460,21 @@ pub async fn items(
         .into_iter()
         .filter_map(|row| into_item(row, today))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock_name;
+
+    #[test]
+    fn lock_name_fits_mysql_limit_for_any_group_uid() {
+        let long = "g".repeat(500);
+        for group in ["", "grpuid20250610_142621_veranda", long.as_str()] {
+            let name = lock_name(group);
+            assert!(name.len() <= 64, "{name}");
+            assert!(name.starts_with("kawalo:schedule:"));
+        }
+        assert_ne!(lock_name("a"), lock_name("b"));
+        assert_eq!(lock_name("a"), lock_name("a"));
+    }
 }
