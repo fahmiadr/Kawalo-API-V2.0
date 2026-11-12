@@ -16,6 +16,10 @@ struct AbsenRow {
     lat: Option<String>,
     long: Option<String>,
     diff_mins: Option<i32>,
+    early_mins: i32,
+    face_verified: i64,
+    has_photo: i64,
+    manual: i64,
     location: Option<String>,
     shift_uid: Option<String>,
     group_uid: Option<String>,
@@ -82,7 +86,11 @@ pub async fn list(
     let mut query = QueryBuilder::<MySql>::new(
         "SELECT AbsenID AS id, AbsenEmail AS email, AbsenName AS name, \
          CAST(AbsenDT AS CHAR) AS taken_at, AbsenType AS kind, ALat AS lat, ALong AS `long`, \
-         ADiffMins AS diff_mins, ALocation AS location, AShiftUID AS shift_uid, \
+         ADiffMins AS diff_mins, AEarlyMins AS early_mins, \
+         CAST(AFaceVerified AS SIGNED) AS face_verified, \
+         CAST(APhotoPath IS NOT NULL AND TRIM(APhotoPath) <> '' AS SIGNED) AS has_photo, \
+         CAST(EXISTS(SELECT 1 FROM tkattendancemanual m WHERE m.AbsenID = tkabsen.AbsenID) AS SIGNED) AS manual, \
+         ALocation AS location, AShiftUID AS shift_uid, \
          AbsenGroupUID AS group_uid, AShStart AS sh_start \
          FROM tkabsen WHERE AbsenGroupUID = ",
     );
@@ -240,6 +248,15 @@ fn to_item(
         latitude: clean_coordinate(record.lat.as_deref()),
         longitude: clean_coordinate(record.long.as_deref()),
         diff_minutes: record.diff_mins.map_or(0, i64::from),
+        early_leave_minutes: i64::from(record.early_mins),
+        face_verified: if record.face_verified != 0 {
+            Some(true)
+        } else if record.manual != 0 {
+            Some(false)
+        } else {
+            None
+        },
+        has_photo: record.has_photo != 0,
         location_name: clean_string(record.location.as_deref()),
         shift_name: shift.and_then(|s| clean_string(s.name.as_deref())),
         shift_color: shift.and_then(|s| clean_string(s.color.as_deref())),

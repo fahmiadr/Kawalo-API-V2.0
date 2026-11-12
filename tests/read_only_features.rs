@@ -285,6 +285,9 @@ mod attendance {
                 "latitude": "-6.200000",
                 "longitude": "106.816666",
                 "diff_minutes": 3,
+                "early_leave_minutes": 0,
+                "face_verified": null,
+                "has_photo": false,
                 "location_name": "Pos Utama",
                 "shift_name": f.shift_name,
                 "shift_color": "#112233",
@@ -756,13 +759,20 @@ mod group_members {
     use super::*;
 
     async fn join(db: &MySqlPool, group: &str, email: &str, status: &str) {
-        sqlx::query("INSERT INTO tkusergroup (Email, GroupUID, Status) VALUES (?, ?, ?)")
-            .bind(email)
-            .bind(group)
-            .bind(status)
-            .execute(db)
-            .await
-            .expect("insert membership");
+        join_as(db, group, email, status, "USER").await;
+    }
+
+    async fn join_as(db: &MySqlPool, group: &str, email: &str, status: &str, category: &str) {
+        sqlx::query(
+            "INSERT INTO tkusergroup (Email, GroupUID, Status, Category) VALUES (?, ?, ?, ?)",
+        )
+        .bind(email)
+        .bind(group)
+        .bind(status)
+        .bind(category)
+        .execute(db)
+        .await
+        .expect("insert membership");
     }
 
     #[tokio::test]
@@ -796,9 +806,11 @@ mod group_members {
         insert_user(db, &email("pending"), "Menunggu", None, "OFF DUTY").await;
         insert_user(db, &email("lain"), "Anggota Lain", None, "OFF DUTY").await;
         insert_user(db, &email("namakosong"), "N/A", None, "OFF DUTY").await;
-        for who in ["candra", "ahmad", "namakosong", "tanpaprofil"] {
+        for who in ["namakosong", "tanpaprofil"] {
             join(db, &group, &email(who), "JOINED").await;
         }
+        join_as(db, &group, &email("candra"), "JOINED", "admin").await;
+        join_as(db, &group, &email("ahmad"), "JOINED", "GUARD").await;
         join(db, &group, &email("pending"), "JOIN_WAIT").await;
         join(db, &format!("o{tag}"), &email("lain"), "JOINED").await;
 
@@ -812,10 +824,10 @@ mod group_members {
         assert_eq!(
             body["data"],
             json!([
-                {"email": email("ahmad"), "name": "ahmad Zulkifli", "profilePic": null},
-                {"email": email("candra"), "name": "Candra", "profilePic": "candra.png"},
-                {"email": email("namakosong"), "name": null, "profilePic": null},
-                {"email": email("tanpaprofil"), "name": null, "profilePic": null},
+                {"email": email("ahmad"), "name": "ahmad Zulkifli", "profilePic": null, "role": "GUARD"},
+                {"email": email("candra"), "name": "Candra", "profilePic": "candra.png", "role": "ADMIN"},
+                {"email": email("namakosong"), "name": null, "profilePic": null, "role": "USER"},
+                {"email": email("tanpaprofil"), "name": null, "profilePic": null, "role": "USER"},
             ])
         );
     }

@@ -16,6 +16,10 @@ pub struct AttendanceItem {
     pub latitude: Option<String>,
     pub longitude: Option<String>,
     pub diff_minutes: i64,
+    pub early_leave_minutes: i64,
+    /// `null` for rows that predate face verification; `false` for a manual row an admin approved.
+    pub face_verified: Option<bool>,
+    pub has_photo: bool,
     pub location_name: Option<String>,
     pub shift_name: Option<String>,
     pub shift_color: Option<String>,

@@ -6,6 +6,7 @@ use redis::aio::ConnectionManager;
 use sqlx::MySqlPool;
 
 use crate::core::config::Config;
+use crate::core::face::Faces;
 use crate::core::redis::Redis;
 use crate::core::security::{RsaKeyManager, SessionVersions};
 
@@ -26,12 +27,15 @@ pub struct AppState {
     pub redis_client: redis::Client,
     pub keys: RsaKeyManager,
     pub sessions: SessionVersions,
+    /// Face recognition; unavailable unless fully configured (see [`Faces::load`]).
+    pub faces: Faces,
 }
 
 impl AppState {
     pub fn new(config: Arc<Config>, db: MySqlPool, redis: Redis, keys: RsaKeyManager) -> Self {
         let sessions =
             SessionVersions::new(redis.manager.clone(), config.auth.refresh_token_expires_in);
+        let faces = Faces::load(&config.faces);
         Self {
             config,
             db,
@@ -39,6 +43,7 @@ impl AppState {
             redis_client: redis.client,
             keys,
             sessions,
+            faces,
         }
     }
 }

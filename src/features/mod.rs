@@ -3,6 +3,7 @@
 
 pub mod attendance;
 pub mod auth;
+pub mod faces;
 pub mod group;
 pub mod guest;
 pub mod incident;
@@ -10,6 +11,7 @@ pub mod information;
 pub mod operational;
 pub mod ptt;
 pub mod schedule;
+pub mod shift;
 pub mod uploads;
 
 mod batch;

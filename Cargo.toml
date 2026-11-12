@@ -16,11 +16,16 @@ dotenvy = "0.15.7"
 form_urlencoded = "1.2.2"
 futures-util = "0.3.34"
 hex = "0.4.3"
+# JPEG only: face photos are decoded for inference and re-encoded small before encrypted storage.
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 log = "0.4.35"
 mimalloc = "0.1.52"
 notify = "8.2.2"
 ogg = { version = "0.9.2", default-features = false }
+# `load-dynamic`: ONNX Runtime is dlopen'ed from FACE_ORT_LIBRARY at startup, so nothing is
+# downloaded or linked at build time and cross-compiling with cargo-zigbuild is unaffected.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic"] }
 pem = "3"
 rand = "0.10.3"
 redis = { version = "1.8.1", features = ["tokio-comp", "connection-manager"] }

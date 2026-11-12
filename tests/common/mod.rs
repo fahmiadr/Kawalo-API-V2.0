@@ -4,6 +4,8 @@
 
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
+pub mod faces;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -58,6 +60,26 @@ impl TestApp {
         configure: impl FnOnce(&mut Config),
         extra: Router<AppState>,
     ) -> Self {
+        Self::start_full(configure, extra, |_| {}).await
+    }
+
+    /// Like [`start_with`](Self::start_with), also adjusting the [`AppState`] before the router
+    /// is built (for example to plug in a fake face engine).
+    ///
+    /// # Panics
+    /// Same as [`start`](Self::start).
+    pub async fn start_with_state(
+        configure: impl FnOnce(&mut Config),
+        adjust: impl FnOnce(&mut AppState),
+    ) -> Self {
+        Self::start_full(configure, Router::new(), adjust).await
+    }
+
+    async fn start_full(
+        configure: impl FnOnce(&mut Config),
+        extra: Router<AppState>,
+        adjust: impl FnOnce(&mut AppState),
+    ) -> Self {
         let mut config = Config::from_env();
         config.node_env = "test".to_owned();
         if std::env::var_os("DATABASE_URL").is_none() {
@@ -82,7 +104,8 @@ impl TestApp {
             .await
             .expect("MariaDB reachable (run scripts/dev-services.sh start)");
         let redis = redis::connect(&config).await.expect("Redis reachable");
-        let state = AppState::new(config, pool, redis, keys);
+        let mut state = AppState::new(config, pool, redis, keys);
+        adjust(&mut state);
         let router = if extra.has_routes() {
             build_app_with(state.clone(), extra)
         } else {
@@ -187,6 +210,95 @@ impl TestApp {
         )
     }
 
+    /// Sends a `multipart/form-data` request and returns the status and parsed JSON body.
+    ///
+    /// # Panics
+    /// Same as [`call`](Self::call).
+    pub async fn call_multipart(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        parts: &[Part<'_>],
+    ) -> (StatusCode, Value) {
+        const BOUNDARY: &str = "kawalo-test-boundary";
+        let mut body = Vec::new();
+        for part in parts {
+            body.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
+            match part {
+                Part::Text(name, value) => {
+                    body.extend_from_slice(
+                        format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}")
+                            .as_bytes(),
+                    );
+                }
+                Part::File(name, bytes) => {
+                    body.extend_from_slice(
+                        format!(
+                            "Content-Disposition: form-data; name=\"{name}\"; filename=\"face.jpg\"\r\n\
+                             Content-Type: image/jpeg\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(bytes);
+                }
+            }
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+
+        let mut builder = Request::builder().method(Method::POST).uri(path).header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        );
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let (status, _, bytes) = self
+            .send(builder.body(Body::from(body)).expect("request"))
+            .await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// A request whose response body is returned raw (binary downloads).
+    ///
+    /// # Panics
+    /// Same as [`call`](Self::call).
+    pub async fn call_raw(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut builder = Request::builder()
+            .method(Method::from_bytes(method.as_bytes()).expect("method"))
+            .uri(path);
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        self.send(builder.body(Body::empty()).expect("request"))
+            .await
+    }
+
+    async fn send(&self, mut request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:50000"
+                .parse::<SocketAddr>()
+                .expect("peer address"),
+        ));
+        let response = self
+            .router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("infallible router");
+        let (parts, body) = response.into_parts();
+        let bytes = body.collect().await.expect("response body").to_bytes();
+        (parts.status, parts.headers, bytes.to_vec())
+    }
+
     /// Serves the router on an ephemeral port, for tests that need real sockets (SSE, WebSocket).
     ///
     /// # Panics
@@ -205,4 +317,10 @@ impl TestApp {
         });
         addr
     }
+}
+
+/// One part of a [`TestApp::call_multipart`] body.
+pub enum Part<'a> {
+    Text(&'a str, &'a str),
+    File(&'a str, Vec<u8>),
 }

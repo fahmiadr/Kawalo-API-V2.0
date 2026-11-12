@@ -18,6 +18,7 @@ data.sql
 
 # Uploaded files
 /uploads/
+/face-photos/
 
 # Logs
 logs/

@@ -489,6 +489,7 @@ model tkshift {
   LocLat            String  @default("N/A") @db.VarChar(32)
   LocLong           String  @default("N/A") @db.VarChar(32)
   LocRadius         Int     @default(0)
+  ShiftDeletedAt    DateTime?
 }
 
 model tkuser {

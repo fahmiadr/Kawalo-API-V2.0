@@ -39,6 +39,9 @@ pub struct ErrorBody {
     pub error_code: ErrorCode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
+    /// Extras for the app, kept in production (additive to the legacy envelope).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl ErrorBody {
@@ -53,6 +56,7 @@ impl ErrorBody {
             message: message.into(),
             error_code,
             details,
+            data: None,
         }
     }
 }

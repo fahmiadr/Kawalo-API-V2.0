@@ -48,6 +48,18 @@ pub enum ErrorCode {
     CacheError,
     RateLimitExceeded,
     ServiceUnavailable,
+    FaceServiceUnavailable,
+    FaceNotRegistered,
+    FaceAlreadyRegistered,
+    FaceNotMatch,
+    FaceQualityLow,
+    FaceDuplicate,
+    AttendanceNoSchedule,
+    AttendanceAlreadyCompleted,
+    AttendanceOutOfRadius,
+    AttendanceNonceInvalid,
+    AttendanceManualUnavailable,
+    ScheduleOtherShift,
 }
 
 impl ErrorCode {
@@ -73,6 +85,18 @@ impl ErrorCode {
             Self::CacheError => "CACHE_ERROR",
             Self::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
             Self::ServiceUnavailable => "SERVICE_UNAVAILABLE",
+            Self::FaceServiceUnavailable => "FACE_SERVICE_UNAVAILABLE",
+            Self::FaceNotRegistered => "FACE_NOT_REGISTERED",
+            Self::FaceAlreadyRegistered => "FACE_ALREADY_REGISTERED",
+            Self::FaceNotMatch => "FACE_NOT_MATCH",
+            Self::FaceQualityLow => "FACE_QUALITY_LOW",
+            Self::FaceDuplicate => "FACE_DUPLICATE",
+            Self::AttendanceNoSchedule => "ATTENDANCE_NO_SCHEDULE",
+            Self::AttendanceAlreadyCompleted => "ATTENDANCE_ALREADY_COMPLETED",
+            Self::AttendanceOutOfRadius => "ATTENDANCE_OUT_OF_RADIUS",
+            Self::AttendanceNonceInvalid => "ATTENDANCE_NONCE_INVALID",
+            Self::AttendanceManualUnavailable => "ATTENDANCE_MANUAL_UNAVAILABLE",
+            Self::ScheduleOtherShift => "SCHEDULE_OTHER_SHIFT",
         }
     }
 }
@@ -92,7 +116,9 @@ pub struct ApiError {
     status: StatusCode,
     code: ErrorCode,
     message: String,
-    details: Option<Value>,
+    /// `details` and `data` are boxed: the error type is returned everywhere and clippy bounds its size.
+    details: Option<Box<Value>>,
+    data: Option<Box<Value>>,
     retry_after_seconds: Option<u64>,
 }
 
@@ -103,6 +129,7 @@ impl ApiError {
             code,
             message: message.into(),
             details: None,
+            data: None,
             retry_after_seconds: None,
         }
     }
@@ -203,7 +230,7 @@ impl ApiError {
     /// `detail` is exposed outside production only.
     pub fn invalid_input(detail: impl Into<String>) -> Self {
         Self {
-            details: Some(Value::String(detail.into())),
+            details: Some(Box::new(Value::String(detail.into()))),
             ..Self::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorCode::ValidationError,
@@ -246,7 +273,14 @@ impl ApiError {
 
     #[must_use]
     pub fn with_details(mut self, details: Value) -> Self {
-        self.details = Some(details);
+        self.details = Some(Box::new(details));
+        self
+    }
+
+    /// Machine-readable extras the app needs in every environment, unlike `details`.
+    #[must_use]
+    pub fn with_data(mut self, data: Value) -> Self {
+        self.data = Some(Box::new(data));
         self
     }
 
@@ -269,7 +303,7 @@ impl ApiError {
     }
 
     pub fn details(&self) -> Option<&Value> {
-        self.details.as_ref()
+        self.details.as_deref()
     }
 
     pub fn retry_after_seconds(&self) -> Option<u64> {
@@ -293,7 +327,12 @@ impl std::error::Error for ApiError {}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = ErrorBody::new(self.message, self.code, self.details);
+        let mut body = ErrorBody::new(
+            self.message,
+            self.code,
+            self.details.map(|details| *details),
+        );
+        body.data = self.data.map(|data| *data);
         let mut response = (self.status, Json(body)).into_response();
         // Elysia handlers only set it when the value is non-zero.
         if let Some(seconds @ 1..) = self.retry_after_seconds

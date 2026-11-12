@@ -7,6 +7,7 @@ pub mod constants;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod face;
 pub mod health;
 pub mod ids;
 pub mod logging;

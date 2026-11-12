@@ -11,6 +11,7 @@ const DEFAULT_TRUSTED_PROXY_CIDRS: &str =
     "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16";
 
 const DEFAULT_UPLOAD_DIR: &str = "./uploads";
+const DEFAULT_FACE_PHOTO_DIR: &str = "./face-photos";
 
 /// Settings for the authentication domain (`AuthConfig` in the TypeScript code).
 #[derive(Debug, Clone)]
@@ -54,6 +55,124 @@ impl Default for AuthConfig {
     }
 }
 
+/// Check-in/out rules. Tolerances are team decisions still open, so they are configurable and
+/// default to the strictest value.
+#[derive(Debug, Clone)]
+pub struct AttendanceConfig {
+    /// A check-in up to this many minutes after the shift start still counts as on time.
+    pub late_tolerance_minutes: i64,
+    /// A check-out up to this many minutes before the shift end still counts as on time.
+    pub early_leave_tolerance_minutes: i64,
+    /// Lifetime of the single-use nonce a device must send with every check-in/out.
+    pub nonce_ttl_seconds: u64,
+}
+
+impl AttendanceConfig {
+    pub fn from_env() -> Self {
+        Self {
+            late_tolerance_minutes: env_uint("ATTENDANCE_LATE_TOLERANCE_MINUTES", 0),
+            early_leave_tolerance_minutes: env_uint("ATTENDANCE_EARLY_LEAVE_TOLERANCE_MINUTES", 0),
+            nonce_ttl_seconds: env_uint("ATTENDANCE_NONCE_TTL_SECONDS", 120),
+        }
+    }
+}
+
+impl Default for AttendanceConfig {
+    fn default() -> Self {
+        Self {
+            late_tolerance_minutes: 0,
+            early_leave_tolerance_minutes: 0,
+            nonce_ttl_seconds: 120,
+        }
+    }
+}
+
+/// Face recognition. Every path is optional: without the runtime, both models and a valid key,
+/// every face operation is refused (fail closed); there is no bypass.
+#[derive(Clone)]
+pub struct FaceConfig {
+    /// `libonnxruntime.so` / `.dylib`, loaded at startup.
+    pub ort_library: Option<PathBuf>,
+    /// YuNet face detector with keypoints (ONNX).
+    pub detector_model: Option<PathBuf>,
+    /// ArcFace-style 112x112 embedder (ONNX), e.g. AuraFace glintr100.
+    pub embedder_model: Option<PathBuf>,
+    /// 32 raw bytes from base64 `FACE_ENCRYPTION_KEY`; `None` when missing or malformed.
+    pub encryption_key: Option<[u8; 32]>,
+    /// Private directory for encrypted face photos. Never `UPLOAD_DIR`, which is served publicly.
+    pub photo_dir: PathBuf,
+    /// Minimum cosine similarity for a 1:1 match.
+    pub match_threshold: f32,
+    /// Cosine similarity at or above which a new registration is the same face as another member.
+    pub duplicate_threshold: f32,
+    /// Photos that must pass the quality gate for a registration.
+    pub register_min_photos: usize,
+}
+
+impl FaceConfig {
+    pub fn from_env() -> Self {
+        let path = |key: &str| {
+            env::var(key)
+                .ok()
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        Self {
+            ort_library: path("FACE_ORT_LIBRARY"),
+            detector_model: path("FACE_DETECTOR_MODEL"),
+            embedder_model: path("FACE_EMBEDDER_MODEL"),
+            encryption_key: env::var("FACE_ENCRYPTION_KEY")
+                .ok()
+                .and_then(|raw| parse_key(&raw)),
+            photo_dir: PathBuf::from(env_string("FACE_PHOTO_DIR", DEFAULT_FACE_PHOTO_DIR)),
+            match_threshold: env_f32("FACE_MATCH_THRESHOLD", 0.5),
+            duplicate_threshold: env_f32("FACE_DUPLICATE_THRESHOLD", 0.5),
+            register_min_photos: env_uint("FACE_REGISTER_MIN_PHOTOS", 3),
+        }
+    }
+}
+
+impl Default for FaceConfig {
+    fn default() -> Self {
+        Self {
+            ort_library: None,
+            detector_model: None,
+            embedder_model: None,
+            encryption_key: None,
+            photo_dir: PathBuf::from(DEFAULT_FACE_PHOTO_DIR),
+            match_threshold: 0.5,
+            duplicate_threshold: 0.5,
+            register_min_photos: 3,
+        }
+    }
+}
+
+/// The key is a secret, so `Debug` only says whether it is set.
+impl std::fmt::Debug for FaceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FaceConfig")
+            .field("ort_library", &self.ort_library)
+            .field("detector_model", &self.detector_model)
+            .field("embedder_model", &self.embedder_model)
+            .field("encryption_key_set", &self.encryption_key.is_some())
+            .field("photo_dir", &self.photo_dir)
+            .field("match_threshold", &self.match_threshold)
+            .field("duplicate_threshold", &self.duplicate_threshold)
+            .field("register_min_photos", &self.register_min_photos)
+            .finish()
+    }
+}
+
+/// Standard base64 of exactly 32 bytes (`openssl rand -base64 32`).
+fn parse_key(raw: &str) -> Option<[u8; 32]> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw.trim())
+        .ok()?;
+    bytes.try_into().ok()
+}
+
 /// Process-wide settings, all keys and defaults identical to `EnvConfig`.
 #[derive(Clone)]
 pub struct Config {
@@ -81,6 +200,8 @@ pub struct Config {
     /// Records every push-to-talk turn to `UPLOAD_DIR/ptt`. Off by default because it stores real
     /// voice; listing, playing and deleting existing recordings work either way.
     pub auth: AuthConfig,
+    pub attendance: AttendanceConfig,
+    pub faces: FaceConfig,
 }
 
 impl Config {
@@ -117,6 +238,8 @@ impl Config {
                 .trim_end_matches('/')
                 .to_owned(),
             auth: AuthConfig::from_env(),
+            attendance: AttendanceConfig::from_env(),
+            faces: FaceConfig::from_env(),
             node_env,
         }
     }
@@ -168,6 +291,8 @@ impl std::fmt::Debug for Config {
             .field("upload_dir", &self.upload_dir)
             .field("public_base_url", &self.public_base_url)
             .field("auth", &self.auth)
+            .field("attendance", &self.attendance)
+            .field("faces", &self.faces)
             .finish()
     }
 }
@@ -190,6 +315,8 @@ impl Default for Config {
             upload_dir: PathBuf::from(DEFAULT_UPLOAD_DIR),
             public_base_url: String::new(),
             auth: AuthConfig::default(),
+            attendance: AttendanceConfig::default(),
+            faces: FaceConfig::default(),
         }
     }
 }
@@ -233,6 +360,15 @@ fn env_uint<T: TryFrom<i64>>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+/// A finite float, else the default.
+fn env_f32(key: &str, default: f32) -> f32 {
+    env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(default)
+}
+
 fn env_bool(key: &str, default: bool) -> bool {
     match env::var(key) {
         Ok(raw) if !raw.trim().is_empty() => {
@@ -271,6 +407,21 @@ mod tests {
             ..Config::default()
         };
         assert!(!format!("{config:?}").contains("s3cret"));
+    }
+
+    #[test]
+    fn face_key_must_be_32_bytes_of_base64() {
+        assert_eq!(
+            parse_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+            Some([0; 32])
+        );
+        assert_eq!(parse_key("AAAA"), None);
+        assert_eq!(parse_key("not base64!"), None);
+        let config = FaceConfig {
+            encryption_key: Some([7; 32]),
+            ..FaceConfig::default()
+        };
+        assert!(!format!("{config:?}").contains('7'));
     }
 
     #[test]
