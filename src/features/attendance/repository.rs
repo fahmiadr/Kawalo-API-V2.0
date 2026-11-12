@@ -19,6 +19,7 @@ struct AbsenRow {
     early_mins: i32,
     face_verified: i64,
     has_photo: i64,
+    face_score: Option<f32>,
     manual: i64,
     location: Option<String>,
     shift_uid: Option<String>,
@@ -67,6 +68,7 @@ fn push_in_list(query: &mut QueryBuilder<MySql>, values: &[String]) {
 pub async fn list(
     pool: &MySqlPool,
     filter: &PeriodFilter<'_>,
+    with_scores: bool,
 ) -> Result<Vec<AttendanceItem>, sqlx::Error> {
     let mut matching_shifts = Vec::new();
     let mut pattern = None;
@@ -88,6 +90,7 @@ pub async fn list(
          CAST(AbsenDT AS CHAR) AS taken_at, AbsenType AS kind, ALat AS lat, ALong AS `long`, \
          ADiffMins AS diff_mins, AEarlyMins AS early_mins, \
          CAST(AFaceVerified AS SIGNED) AS face_verified, \
+         AFaceScore AS face_score, \
          CAST(APhotoPath IS NOT NULL AND TRIM(APhotoPath) <> '' AS SIGNED) AS has_photo, \
          CAST(EXISTS(SELECT 1 FROM tkattendancemanual m WHERE m.AbsenID = tkabsen.AbsenID) AS SIGNED) AS manual, \
          ALocation AS location, AShiftUID AS shift_uid, \
@@ -139,7 +142,7 @@ pub async fn list(
 
     Ok(records
         .into_iter()
-        .filter_map(|r| to_item(r, &groups, &users, &shifts))
+        .filter_map(|r| to_item(r, &groups, &users, &shifts, with_scores))
         .collect())
 }
 
@@ -212,6 +215,7 @@ fn to_item(
     groups: &HashMap<String, Option<String>>,
     users: &HashMap<String, UserRow>,
     shifts: &HashMap<String, ShiftRow>,
+    with_scores: bool,
 ) -> Option<AttendanceItem> {
     if record.id <= 0 {
         return None;
@@ -257,6 +261,10 @@ fn to_item(
             None
         },
         has_photo: record.has_photo != 0,
+        face_similarity_percent: record
+            .face_score
+            .filter(|_| with_scores)
+            .map(super::check::percent),
         location_name: clean_string(record.location.as_deref()),
         shift_name: shift.and_then(|s| clean_string(s.name.as_deref())),
         shift_color: shift.and_then(|s| clean_string(s.color.as_deref())),

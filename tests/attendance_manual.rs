@@ -443,7 +443,13 @@ async fn approving_writes_an_unverified_row_once() {
     assert_eq!(item["id"], attendance_id.as_str());
     assert_eq!(item["face_verified"], false);
     assert_eq!(item["has_photo"], false);
-    assert_eq!(item["early_leave_minutes"], 0);
+    assert_eq!(item["face_similarity_percent"], Value::Null);
+    let (_, as_admin) = f
+        .app
+        .call("GET", "/api/v1/attendance", Some(&f.admin), None)
+        .await;
+    assert_eq!(as_admin["data"][0]["id"], attendance_id.as_str());
+    assert_eq!(as_admin["data"][0]["face_similarity_percent"], Value::Null);
 
     // The shift is open now: the next manual request is the check-out.
     let (code, body) = file(&f, "camera_unavailable").await;

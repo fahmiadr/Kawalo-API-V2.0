@@ -16,6 +16,7 @@ use super::check_repository::{self as repository, NewAbsen, Scheduled};
 use super::entity::Category;
 use super::manual;
 use super::rules::{self, Geofence, Kind, Refusal, Status};
+use super::setting;
 use crate::core::clean::{clean_string, iso_string};
 use crate::core::error::{ApiError, ErrorCode};
 use crate::core::extract::CurrentUser;
@@ -113,12 +114,10 @@ pub struct CheckResult {
     /// `null` when the shift has no location or radius (no geofence).
     distance_meters: Option<i64>,
     radius_meters: Option<i32>,
-    /// Cosine similarity to the registered face as a whole percent, floored at 0.
-    similarity_percent: i32,
 }
 
 /// Whole percent of a cosine score; negative scores (opposite vectors) read as 0.
-fn percent(score: f32) -> i32 {
+pub(super) fn percent(score: f32) -> i32 {
     (score.clamp(0.0, 1.0) * 100.0).round() as i32
 }
 
@@ -215,16 +214,13 @@ pub async fn check(
         .await
         .map_err(|err| face_error(&err))?;
     let score = cosine(&reference, &probe);
-    if score < state.config.faces.match_threshold {
-        tracing::warn!(
-            similarity = score,
-            threshold = state.config.faces.match_threshold,
-            "[Face] check-in mismatch"
-        );
+    let threshold = setting::group_threshold(&state, &group_uid)
+        .await?
+        .unwrap_or(state.config.faces.match_threshold);
+    if score < threshold {
+        tracing::warn!(similarity = score, threshold, "[Face] check-in mismatch");
         let failed = manual::count_failure(&state, &user.email).await?;
-        let mut progress = manual::progress(failed);
-        progress["similarity_percent"] = percent(score).into();
-        progress["required_percent"] = percent(state.config.faces.match_threshold).into();
+        let progress = manual::progress(failed);
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             ErrorCode::FaceNotMatch,
@@ -309,7 +305,6 @@ pub async fn check(
             location_name: clean_string(Some(&location)),
             distance_meters,
             radius_meters,
-            similarity_percent: percent(score),
         },
         message,
     )

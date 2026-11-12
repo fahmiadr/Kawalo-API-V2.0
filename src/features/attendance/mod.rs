@@ -9,6 +9,8 @@ mod manual;
 mod manual_repository;
 mod repository;
 mod rules;
+mod setting;
+mod setting_repository;
 mod stats;
 
 use axum::Router;
@@ -29,6 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/attendance", get(list).post(check::check))
         .route("/attendance/nonce", post(check::nonce))
         .route("/attendance/stats", get(stats::stats))
+        .route("/attendance/settings", get(setting::get).put(setting::put))
         .route("/attendance/{id}/photo", get(check::photo))
         .route(
             "/attendance/manual-requests",
@@ -45,6 +48,7 @@ async fn list(
     let Some(group_uid) = user.group_uid.as_deref().filter(|g| !g.is_empty()) else {
         return ok(Vec::new(), MSG_LISTED);
     };
-    let items = repository::list(&state.db, &query.into_filter(group_uid)).await?;
+    let admin = user.require_role(&["ADMIN", "SUPER_ADMIN"]).is_ok();
+    let items = repository::list(&state.db, &query.into_filter(group_uid), admin).await?;
     ok(items, MSG_LISTED)
 }

@@ -20,6 +20,8 @@ use super::TestApp;
 pub const RED: [u8; 3] = [220, 30, 30];
 pub const GREEN: [u8; 3] = [30, 200, 40];
 pub const BLUE: [u8; 3] = [30, 40, 210];
+/// Red-dominant with a strong blue second channel: cosine to `RED` is about 0.71.
+pub const RED_TILTED: [u8; 3] = [220, 30, 130];
 pub const GREY: [u8; 3] = [128, 128, 128];
 pub const BLACK: [u8; 3] = [0, 0, 0];
 
@@ -53,6 +55,16 @@ impl FaceEngine for FakeFaceEngine {
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map_or(0, |(i, _)| i);
         embedding[dominant] = 1.0;
+        // Plain test colours have two equal weak channels; a clear gap between them tilts the
+        // embedding toward the stronger one, giving an intermediate similarity.
+        let mut weak: Vec<(usize, f32)> = (0..3)
+            .filter(|&c| c != dominant)
+            .map(|c| (c, mean[c]))
+            .collect();
+        weak.sort_by(|a, b| b.1.total_cmp(&a.1));
+        if weak[0].1 - weak[1].1 > 40.0 {
+            embedding[weak[0].0] = (weak[0].1 - weak[1].1) / 100.0;
+        }
         Ok(embedding)
     }
 }

@@ -353,13 +353,9 @@ async fn face_must_be_registered_and_match() {
     let (code, body) = check_here(&f, GREEN).await;
     assert_eq!(code, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(body["error_code"], "FACE_NOT_MATCH");
-    assert_eq!(body["data"]["required_percent"], 50);
-    assert!(
-        body["data"]["similarity_percent"]
-            .as_i64()
-            .expect("percent")
-            < 50
-    );
+    assert_eq!(body["data"].get("required_percent"), None);
+    assert_eq!(body["data"].get("similarity_percent"), None);
+    assert_eq!(body["data"]["failed_attempts"], 1);
 
     let (code, body) = check_here(&f, BLACK).await;
     assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
@@ -397,12 +393,7 @@ async fn attendance_photo_is_for_group_admins_only() {
     let f = fixture().await;
     let (code, body) = check_here(&f, RED).await;
     assert_eq!(code, StatusCode::CREATED, "{body}");
-    assert!(
-        body["data"]["similarity_percent"]
-            .as_i64()
-            .expect("percent")
-            >= 50
-    );
+    assert_eq!(body["data"].get("similarity_percent"), None);
     let url = format!(
         "/api/v1/attendance/{}/photo",
         body["data"]["id"].as_str().expect("id")

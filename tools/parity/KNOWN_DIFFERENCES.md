@@ -15,6 +15,8 @@ State at the last full parity run: 1427 steps, 0 differences with `KW_NODE_ENV=p
 | Guests have no free-text host name | `tkguest.GuestToName` (`guest_to_name`, max 128, nullable) in POST/PUT/PATCH bodies, every guest response and `search` | The app lets guards type the host. `guest_to_user_email` is unchanged (still e-mail + joined member). Responses carry one extra key, so guest steps differ against a TS oracle until it is patched or the key is ignored. |
 | `GET /groups/members` has no `role` | Each item also carries `role` (`tkusergroup.Category`, uppercase) | Shift/schedule management in the app needs to tell admins from guards; additive, existing fields unchanged. |
 | `GET /attendance` items have no `early_leave_minutes`, `face_verified`, `has_photo` | Each item also carries them (`AEarlyMins`; `true` for a face-verified row, `false` for a manual row an admin approved, `null` for older rows; whether `APhotoPath` is set) | The report and detail screens show check-out lateness and the verification state; additive, existing fields unchanged. |
+| `GET /attendance` items have no `face_similarity_percent` | Each item carries it: the stored face match score as a whole percent for ADMIN/SUPER_ADMIN tokens (by role, not `allow_admin`), `null` for other roles and for manual or legacy rows | Admins review how close each face match was; additive. |
+| No `GET`/`PUT /attendance/settings` | Per-group minimum face similarity percent (20..95, `null` resets to `FACE_MATCH_THRESHOLD`), used by `POST /attendance` | Admins tune the pass mark per group; new endpoints. |
 
 ## Elysia quirks that Rust reproduces (probed against the real server)
 

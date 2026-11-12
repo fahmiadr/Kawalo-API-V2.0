@@ -20,6 +20,8 @@ pub struct AttendanceItem {
     /// `null` for rows that predate face verification; `false` for a manual row an admin approved.
     pub face_verified: Option<bool>,
     pub has_photo: bool,
+    /// Stored match score as a whole percent; only for ADMIN/SUPER_ADMIN callers, else `null`.
+    pub face_similarity_percent: Option<i32>,
     pub location_name: Option<String>,
     pub shift_name: Option<String>,
     pub shift_color: Option<String>,

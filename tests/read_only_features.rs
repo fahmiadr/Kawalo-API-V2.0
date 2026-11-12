@@ -288,6 +288,7 @@ mod attendance {
                 "early_leave_minutes": 0,
                 "face_verified": null,
                 "has_photo": false,
+                "face_similarity_percent": null,
                 "location_name": "Pos Utama",
                 "shift_name": f.shift_name,
                 "shift_color": "#112233",
