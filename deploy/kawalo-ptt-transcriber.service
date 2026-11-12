@@ -24,7 +24,7 @@ TimeoutStopSec=30
 # The relay, MySQL and the other aaPanel sites always come first.
 Nice=19
 CPUWeight=10
-CPUQuota=50%
+CPUQuota=150%
 IOSchedulingClass=idle
 MemoryMax=1G
 
