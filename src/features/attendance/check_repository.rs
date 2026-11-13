@@ -22,6 +22,10 @@ struct Row {
     loc_lat: String,
     loc_long: String,
     loc_radius: i32,
+    group_loc_name: Option<String>,
+    group_loc_lat: Option<f64>,
+    group_loc_long: Option<f64>,
+    group_loc_radius: Option<i32>,
 }
 
 /// A schedule row of the caller with its (non-deleted) shift.
@@ -35,6 +39,27 @@ pub struct Scheduled {
     pub loc_lat: String,
     pub loc_long: String,
     pub loc_radius: i32,
+}
+
+/// The group's attendance point when the admin set one, else the shift's own (legacy rows).
+/// Single place for the choice so check-in and manual requests cannot diverge.
+fn effective_location(row: &Row) -> (String, String, String, i32) {
+    match (
+        &row.group_loc_name,
+        row.group_loc_lat,
+        row.group_loc_long,
+        row.group_loc_radius,
+    ) {
+        (Some(name), Some(lat), Some(long), Some(radius)) => {
+            (name.clone(), lat.to_string(), long.to_string(), radius)
+        }
+        _ => (
+            row.loc_name.clone(),
+            row.loc_lat.clone(),
+            row.loc_long.clone(),
+            row.loc_radius,
+        ),
+    }
 }
 
 fn date_key(date: NaiveDate) -> i32 {
@@ -51,6 +76,7 @@ fn into_scheduled(row: Row) -> Option<Scheduled> {
         u32::try_from(row.month).ok()?,
         u32::try_from(row.day).ok()?,
     )?;
+    let (loc_name, loc_lat, loc_long, loc_radius) = effective_location(&row);
     Some(Scheduled {
         schedule_id: row.id,
         slot: Slot {
@@ -62,10 +88,10 @@ fn into_scheduled(row: Row) -> Option<Scheduled> {
         },
         shift_uid: row.shift_uid,
         shift_name: row.shift_name,
-        loc_name: row.loc_name,
-        loc_lat: row.loc_lat,
-        loc_long: row.loc_long,
-        loc_radius: row.loc_radius,
+        loc_name,
+        loc_lat,
+        loc_long,
+        loc_radius,
     })
 }
 
@@ -85,9 +111,11 @@ pub async fn around(
          h.ShiftTimeStart AS start_hour, h.ShiftTimeStart_mm AS start_min, \
          h.ShiftTimeStop AS stop_hour, h.ShiftTimeStop_mm AS stop_min, \
          h.LocName AS loc_name, h.LocLat AS loc_lat, h.LocLong AS loc_long, \
-         h.LocRadius AS loc_radius \
+         h.LocRadius AS loc_radius, l.LocName AS group_loc_name, l.LocLat AS group_loc_lat, \
+         l.LocLong AS group_loc_long, l.LocRadius AS group_loc_radius \
          FROM tkschedule s \
          JOIN tkshift h ON h.ShiftUID = s.SchedShiftUID AND h.ShiftGroupUID = s.SGroupUID \
+         LEFT JOIN tkattendancelocation l ON l.GroupUID = s.SGroupUID \
          WHERE s.SGroupUID = ? AND s.SFriendEmail = ? AND h.ShiftDeletedAt IS NULL \
          AND s.SYear * 10000 + s.SMonth * 100 + s.SDate IN (?, ?) \
          ORDER BY s.SYear, s.SMonth, s.SDate, h.ShiftTimeStart, h.ShiftTimeStart_mm, s.SchedId",

@@ -10,8 +10,6 @@ use crate::core::extract::{Validate, ValidationErrors};
 const NAME_MAX: usize = 128;
 const TEXT_MAX: usize = 128;
 const MINUTES_PER_DAY: i32 = 24 * 60;
-pub const RADIUS_MIN: i32 = 10;
-pub const RADIUS_MAX: i32 = 1000;
 /// Column value for "no text"; legacy rows and the old admin use it everywhere.
 pub const NA: &str = "N/A";
 
@@ -36,10 +34,6 @@ pub struct ShiftBody {
     pub end_time: String,
     pub color: String,
     pub description: Option<String>,
-    pub location_name: Option<String>,
-    pub glat: Option<f64>,
-    pub glong: Option<f64>,
-    pub radius: Option<f64>,
 }
 
 impl Body for ShiftBody {
@@ -49,10 +43,6 @@ impl Body for ShiftBody {
         Field::required("end_time", Kind::text(5, 5)),
         Field::required("color", Kind::text(1, 16)),
         Field::nullable("description", Kind::text(0, TEXT_MAX)),
-        Field::nullable("location_name", Kind::text(0, TEXT_MAX)),
-        Field::nullable("glat", Kind::number(-90.0, 90.0)),
-        Field::nullable("glong", Kind::number(-180.0, 180.0)),
-        Field::nullable("radius", Kind::number(0.0, 1_000_000.0)),
     ]);
 
     // The `HH:MM` format is a schema-level failure (422, before auth) like the length limits.
@@ -84,9 +74,6 @@ pub struct ShiftInput {
     pub end: (i32, i32),
     pub color: String,
     pub description: String,
-    pub location_name: String,
-    pub location: Option<(String, String)>,
-    pub radius: i32,
 }
 
 fn bad_request(message: &str) -> ApiError {
@@ -102,12 +89,6 @@ fn parse_clock(raw: &str) -> Option<(i32, i32)> {
     }
     let (hours, minutes) = (hours.parse().ok()?, minutes.parse().ok()?);
     (hours < 24 && minutes < 60).then_some((hours, minutes))
-}
-
-/// At most seven decimals (about a centimetre) without trailing zeros; fits `VARCHAR(32)`.
-fn coordinate_text(value: f64) -> String {
-    let text = format!("{value:.7}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 fn is_hex_color(raw: &str) -> bool {
@@ -138,41 +119,12 @@ impl ShiftBody {
             return Err(bad_request("Warna harus berformat #RRGGBB."));
         }
 
-        let location = match (self.glat, self.glong) {
-            (None, None) => None,
-            (Some(lat), Some(long)) => {
-                if lat == 0.0 && long == 0.0 {
-                    return Err(bad_request("Koordinat lokasi tidak valid."));
-                }
-                Some((coordinate_text(lat), coordinate_text(long)))
-            }
-            _ => return Err(bad_request("Koordinat lokasi harus diisi berpasangan.")),
-        };
-        let radius = match (&location, self.radius) {
-            (Some(_), Some(r))
-                if r.fract() == 0.0
-                    && (f64::from(RADIUS_MIN)..=f64::from(RADIUS_MAX)).contains(&r) =>
-            {
-                r as i32
-            }
-            (Some(_), _) => {
-                return Err(bad_request("Radius absen harus 10 sampai 1000 meter."));
-            }
-            (None, None | Some(0.0)) => 0,
-            (None, Some(_)) => {
-                return Err(bad_request("Radius absen hanya berlaku bila lokasi diisi."));
-            }
-        };
-
         Ok(ShiftInput {
             name,
             start,
             end,
             color: self.color.to_uppercase(),
             description: text_or_na(self.description.as_deref()),
-            location_name: text_or_na(self.location_name.as_deref()),
-            location,
-            radius,
         })
     }
 }
@@ -187,10 +139,6 @@ pub struct ShiftItem {
     pub duration_mins: i32,
     pub color: String,
     pub description: Option<String>,
-    pub location_name: Option<String>,
-    pub glat: Option<f64>,
-    pub glong: Option<f64>,
-    pub radius: Option<i32>,
 }
 
 /// `crosses_midnight` and `duration_mins` for a shift from `start` to `end` minutes of the day.
@@ -205,14 +153,6 @@ pub fn span(start: i32, end: i32) -> (bool, i32) {
             minutes
         },
     )
-}
-
-/// Legacy coordinates are free text; anything that is not a finite in-range number is "no location".
-pub fn parse_coordinate(raw: &str, limit: f64) -> Option<f64> {
-    raw.trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|v| v.is_finite() && v.abs() <= limit)
 }
 
 #[cfg(test)]
@@ -247,30 +187,16 @@ mod tests {
     }
 
     #[test]
-    fn minimal_shift_has_no_location() {
+    fn minimal_shift_defaults() {
         let input = body(json!({})).expect("valid");
         assert_eq!(input.name, "Shift Pagi");
         assert_eq!(input.color, "#3B82F6");
-        assert_eq!((input.description.as_str(), input.radius), (NA, 0));
-        assert_eq!(input.location, None);
+        assert_eq!(input.description, NA);
     }
 
     #[test]
-    fn location_rules() {
-        let ok = body(json!({"glat": -6.2088, "glong": 106.8456, "radius": 100})).expect("valid");
-        assert_eq!(
-            ok.location,
-            Some(("-6.2088".to_owned(), "106.8456".to_owned()))
-        );
-        assert_eq!(ok.radius, 100);
+    fn business_rules() {
         for extra in [
-            json!({"glat": -6.2}),
-            json!({"glat": 0, "glong": 0, "radius": 100}),
-            json!({"glat": 1, "glong": 1}),
-            json!({"glat": 1, "glong": 1, "radius": 9}),
-            json!({"glat": 1, "glong": 1, "radius": 1001}),
-            json!({"glat": 1, "glong": 1, "radius": 50.5}),
-            json!({"radius": 100}),
             json!({"start_time": "07:00", "end_time": "07:00"}),
             json!({"color": "biru"}),
         ] {
@@ -283,13 +209,5 @@ mod tests {
         assert_eq!(span(7 * 60, 15 * 60), (false, 480));
         assert_eq!(span(22 * 60, 6 * 60), (true, 480));
         assert_eq!(span(60, 60), (true, 1440));
-    }
-
-    #[test]
-    fn coordinate_text_trims_zeros() {
-        assert_eq!(coordinate_text(106.0), "106");
-        assert_eq!(coordinate_text(-6.20880001), "-6.2088");
-        assert_eq!(parse_coordinate("N/A", 90.0), None);
-        assert_eq!(parse_coordinate("91", 90.0), None);
     }
 }

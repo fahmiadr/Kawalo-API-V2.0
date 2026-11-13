@@ -370,6 +370,7 @@ struct ItemRow {
     stop_hour: Option<i32>,
     stop_min: Option<i32>,
     location: Option<String>,
+    group_location: Option<String>,
     checkin: Option<String>,
     checkout: Option<String>,
     late_mins: i32,
@@ -395,7 +396,7 @@ fn into_item(row: ItemRow, today: NaiveDate) -> Option<ManagedItem> {
         shift_color: row.shift_color,
         start_time: clock(row.start_hour, row.start_min),
         end_time: clock(row.stop_hour, row.stop_min),
-        location_name: clean_string(row.location.as_deref()),
+        location_name: clean_string(row.group_location.as_deref().or(row.location.as_deref())),
         locked: date < today || checkin.is_some() || checkout.is_some(),
         checkin,
         checkout,
@@ -427,10 +428,11 @@ pub async fn items(
          h.ShiftUID AS shift_uid, h.ShiftName AS shift_name, h.ShiftColor AS shift_color, \
          h.ShiftTimeStart AS start_hour, h.ShiftTimeStart_mm AS start_min, \
          h.ShiftTimeStop AS stop_hour, h.ShiftTimeStop_mm AS stop_min, h.LocName AS location, \
-         s.ACheckin AS checkin, s.ACheckout AS checkout, s.LateMins AS late_mins \
+         l.LocName AS group_location, s.ACheckin AS checkin, s.ACheckout AS checkout, s.LateMins AS late_mins \
          FROM tkschedule s \
          LEFT JOIN tkshift h ON h.ShiftUID = s.SchedShiftUID AND h.ShiftGroupUID = s.SGroupUID \
          LEFT JOIN tkuser u ON u.UserEmail = s.SFriendEmail \
+         LEFT JOIN tkattendancelocation l ON l.GroupUID = s.SGroupUID \
          WHERE s.SGroupUID = ",
     );
     query.push_bind(group);

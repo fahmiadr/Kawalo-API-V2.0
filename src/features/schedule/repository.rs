@@ -18,6 +18,7 @@ struct Row {
     stop_hour: i32,
     stop_min: i32,
     location: String,
+    group_location: Option<String>,
     checkin: Option<String>,
     checkout: Option<String>,
     late_mins: i32,
@@ -42,7 +43,7 @@ fn into_item(row: Row) -> Option<ScheduleItem> {
         shift_color: row.shift_color,
         start_time: format!("{:02}:{:02}", row.start_hour, row.start_min),
         end_time: format!("{:02}:{:02}", row.stop_hour, row.stop_min),
-        location_name: clean_string(Some(&row.location)),
+        location_name: clean_string(Some(row.group_location.as_ref().unwrap_or(&row.location))),
         checkin: clean_string(row.checkin.as_deref()),
         checkout: clean_string(row.checkout.as_deref()),
         late_mins: row.late_mins,
@@ -64,9 +65,10 @@ pub async fn list(
          h.ShiftUID AS shift_uid, h.ShiftName AS shift_name, h.ShiftColor AS shift_color, \
          h.ShiftTimeStart AS start_hour, h.ShiftTimeStart_mm AS start_min, \
          h.ShiftTimeStop AS stop_hour, h.ShiftTimeStop_mm AS stop_min, h.LocName AS location, \
-         s.ACheckin AS checkin, s.ACheckout AS checkout, s.LateMins AS late_mins \
+         l.LocName AS group_location, s.ACheckin AS checkin, s.ACheckout AS checkout, s.LateMins AS late_mins \
          FROM tkschedule s \
          JOIN tkshift h ON h.ShiftUID = s.SchedShiftUID AND h.ShiftGroupUID = s.SGroupUID \
+         LEFT JOIN tkattendancelocation l ON l.GroupUID = s.SGroupUID \
          WHERE s.SGroupUID = ? AND s.SFriendEmail = ? \
          AND s.SYear * 10000 + s.SMonth * 100 + s.SDate BETWEEN ? AND ? \
          ORDER BY s.SYear, s.SMonth, s.SDate, h.ShiftTimeStart, h.ShiftTimeStart_mm, s.SchedId",

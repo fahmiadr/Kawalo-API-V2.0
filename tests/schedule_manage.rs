@@ -450,3 +450,23 @@ async fn list_is_scoped_to_the_group_and_filters_by_person_and_shift() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn list_shows_the_group_attendance_point_as_location() {
+    let f = fixture().await;
+    f.create(0, &f.pagi, 2, json!({})).await;
+    let range = format!("/schedules?from={0}&to={0}", ymd(2));
+    let (_, body) = f.call("GET", &range, None).await;
+    assert_eq!(body["data"][0]["location_name"], Value::Null);
+
+    sqlx::query(
+        "INSERT INTO tkattendancelocation (GroupUID, LocName, LocLat, LocLong, LocRadius, \
+         UpdatedBy) VALUES (?, 'Gerbang Barat', -6.2, 106.8, 50, 'admin@test.id')",
+    )
+    .bind(&f.group)
+    .execute(&f.app.state.db)
+    .await
+    .expect("group point");
+    let (_, body) = f.call("GET", &range, None).await;
+    assert_eq!(body["data"][0]["location_name"], "Gerbang Barat");
+}

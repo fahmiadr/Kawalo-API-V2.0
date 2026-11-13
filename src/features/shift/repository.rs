@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use sqlx::{FromRow, MySqlPool};
 
-use super::dto::{NA, ShiftInput, ShiftItem, parse_coordinate, span};
+use super::dto::{ShiftInput, ShiftItem, span};
 use crate::core::clean::clean_string;
 
 #[derive(Debug, FromRow)]
@@ -14,10 +14,6 @@ struct Row {
     stop_min: i32,
     color: String,
     description: Option<String>,
-    location_name: String,
-    lat: String,
-    lng: String,
-    radius: i32,
 }
 
 macro_rules! select {
@@ -25,8 +21,7 @@ macro_rules! select {
         concat!(
             "SELECT ShiftUID AS uid, ShiftName AS name, ShiftTimeStart AS start_hour, \
      ShiftTimeStart_mm AS start_min, ShiftTimeStop AS stop_hour, ShiftTimeStop_mm AS stop_min, \
-     ShiftColor AS color, ShiftDesc AS description, LocName AS location_name, \
-     LocLat AS lat, LocLong AS lng, LocRadius AS radius FROM tkshift \
+     ShiftColor AS color, ShiftDesc AS description FROM tkshift \
      WHERE ShiftGroupUID = ? AND ShiftDeletedAt IS NULL",
             $tail
         )
@@ -38,9 +33,6 @@ impl From<Row> for ShiftItem {
         let start = row.start_hour * 60 + row.start_min;
         let end = row.stop_hour * 60 + row.stop_min;
         let (crosses_midnight, duration_mins) = span(start, end);
-        let coordinates = parse_coordinate(&row.lat, 90.0)
-            .zip(parse_coordinate(&row.lng, 180.0))
-            .filter(|&(lat, long)| lat != 0.0 || long != 0.0);
         ShiftItem {
             uid: row.uid,
             name: row.name.trim().to_owned(),
@@ -50,10 +42,6 @@ impl From<Row> for ShiftItem {
             duration_mins,
             color: row.color,
             description: clean_string(row.description.as_deref()),
-            location_name: clean_string(Some(&row.location_name)),
-            glat: coordinates.map(|c| c.0),
-            glong: coordinates.map(|c| c.1),
-            radius: coordinates.map(|_| row.radius),
         }
     }
 }
@@ -115,11 +103,10 @@ pub async fn insert(
     uid: &str,
     shift: &ShiftInput,
 ) -> Result<(), sqlx::Error> {
-    let (lat, long) = shift.location.as_ref().map_or((NA, NA), |(a, b)| (a, b));
     sqlx::query(
         "INSERT INTO tkshift (ShiftUID, ShiftGroupUID, ShiftName, ShiftTimeStart, ShiftTimeStart_mm, \
-         ShiftTimeStop, ShiftTimeStop_mm, ShiftColor, ShiftDesc, LocName, LocLat, LocLong, LocRadius) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ShiftTimeStop, ShiftTimeStop_mm, ShiftColor, ShiftDesc) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(uid)
     .bind(group_uid)
@@ -130,10 +117,6 @@ pub async fn insert(
     .bind(shift.end.1)
     .bind(&shift.color)
     .bind(&shift.description)
-    .bind(&shift.location_name)
-    .bind(lat)
-    .bind(long)
-    .bind(shift.radius)
     .execute(pool)
     .await?;
     Ok(())
@@ -145,11 +128,9 @@ pub async fn replace(
     uid: &str,
     shift: &ShiftInput,
 ) -> Result<(), sqlx::Error> {
-    let (lat, long) = shift.location.as_ref().map_or((NA, NA), |(a, b)| (a, b));
     sqlx::query(
         "UPDATE tkshift SET ShiftName = ?, ShiftTimeStart = ?, ShiftTimeStart_mm = ?, \
-         ShiftTimeStop = ?, ShiftTimeStop_mm = ?, ShiftColor = ?, ShiftDesc = ?, LocName = ?, \
-         LocLat = ?, LocLong = ?, LocRadius = ? \
+         ShiftTimeStop = ?, ShiftTimeStop_mm = ?, ShiftColor = ?, ShiftDesc = ? \
          WHERE ShiftUID = ? AND ShiftGroupUID = ? AND ShiftDeletedAt IS NULL",
     )
     .bind(&shift.name)
@@ -159,10 +140,6 @@ pub async fn replace(
     .bind(shift.end.1)
     .bind(&shift.color)
     .bind(&shift.description)
-    .bind(&shift.location_name)
-    .bind(lat)
-    .bind(long)
-    .bind(shift.radius)
     .bind(uid)
     .bind(group_uid)
     .execute(pool)

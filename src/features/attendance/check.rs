@@ -111,7 +111,7 @@ pub struct CheckResult {
     shift_name: String,
     shift_time_window: String,
     location_name: Option<String>,
-    /// `null` when the shift has no location or radius (no geofence).
+    /// `null` when neither the group nor the shift has a location and radius (no geofence).
     distance_meters: Option<i64>,
     radius_meters: Option<i32>,
 }

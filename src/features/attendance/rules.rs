@@ -153,7 +153,7 @@ impl Status {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Geofence {
-    /// The shift has no usable location or a radius of 0.
+    /// No usable location or a radius of 0.
     Unrestricted,
     Inside {
         distance_m: f64,

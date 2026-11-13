@@ -163,7 +163,7 @@ Semua di bawah `/api/v1`, kecuali tiga di luar prefix.
 | group | `GET /groups/members` |
 | guest | `/guests`: `GET /master-types`, `GET /`, `GET /:id`, `POST /`, `PATCH /:id/acknowledge`, `PATCH /:id/checkout`, `PUT/PATCH/DELETE /:id`, `DELETE /` (batch) |
 | information | `/information`: GET, POST, PUT, PATCH, DELETE (tunggal dan batch) |
-| attendance | `GET /attendance`, `GET/PUT /attendance/settings` (persentase kemiripan wajah minimum per grup; PUT hanya ADMIN/SUPER_ADMIN) |
+| attendance | `GET /attendance`, `GET/PUT /attendance/settings` (persentase kemiripan wajah minimum per grup; PUT hanya ADMIN/SUPER_ADMIN), `GET/PUT /attendance/location` (satu titik absen + radius 10..1000 m per grup, dipakai semua shift; PUT hanya ADMIN/SUPER_ADMIN; tanpa titik grup, absen memakai lokasi shift lama) |
 | operational | `GET /operational` (read-only) |
 | schedule | `GET /schedules/me?from=YYYY-MM-DD&to=YYYY-MM-DD` (jadwal shift milik sendiri; default hari ini + 30 hari, maks 62 hari; tidak ada di versi TypeScript) |
 | incident | `/incidents`: `GET /`, `POST /`, `GET /:id`, `GET /:id/stream` (SSE), `POST /:id/replies`, `PATCH /:id/resolve`, `DELETE /:id` |

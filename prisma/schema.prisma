@@ -89,6 +89,16 @@ model tkabsen {
   @@index([AbsenGroupUID], map: "idx_tkabsen_groupuid")
 }
 
+model tkattendancelocation {
+  GroupUID  String   @id @db.VarChar(64)
+  LocName   String   @db.VarChar(128)
+  LocLat    Float
+  LocLong   Float
+  LocRadius Int
+  UpdatedBy String   @db.VarChar(128)
+  UpdatedAt DateTime @default(now()) @db.Timestamp(0)
+}
+
 model tkcheckpoint {
   CheckPointId  Int    @id @default(autoincrement())
   CheckPointUID String @unique(map: "CheckPointUID") @db.VarChar(64)

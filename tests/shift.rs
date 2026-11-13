@@ -218,34 +218,6 @@ async fn rejects_invalid_shifts() {
             json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "biru"}),
             StatusCode::BAD_REQUEST,
         ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": -6.2}),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": 0, "glong": 0, "radius": 100}),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": 91, "glong": 10, "radius": 100}),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": 1, "glong": 1, "radius": 9}),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": 1, "glong": 1, "radius": 1001}),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "glat": 1, "glong": 1}),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            json!({"name": "A", "start_time": "07:00", "end_time": "15:00", "color": "#3b82f6", "radius": 100}),
-            StatusCode::BAD_REQUEST,
-        ),
     ];
     for (b, expected) in cases {
         let (status, res) = call(&f, "POST", "/api/v1/shifts", Some(&f.admin), Some(&b)).await;
@@ -272,6 +244,7 @@ async fn create_then_list_in_clock_order() {
     let f = fixture().await;
     let mut night = body("Malam", "22:00", "06:00");
     night["description"] = json!("  Jaga malam ");
+    // The location moved to the group (`/attendance/location`); old clients' fields are ignored.
     night["location_name"] = json!("Pos Utama");
     night["glat"] = json!(-6.2088);
     night["glong"] = json!(106.8456);
@@ -284,15 +257,11 @@ async fn create_then_list_in_clock_order() {
     assert_eq!(night["duration_mins"], 480);
     assert_eq!(night["color"], "#3B82F6");
     assert_eq!(night["description"], "Jaga malam");
-    assert_eq!(night["location_name"], "Pos Utama");
-    assert_eq!(night["glat"], -6.2088);
-    assert_eq!(night["glong"], 106.8456);
-    assert_eq!(night["radius"], 100);
+    for key in ["location_name", "glat", "glong", "radius"] {
+        assert!(night.get(key).is_none(), "{key}");
+    }
     assert_eq!(morning["crosses_midnight"], false);
     assert_eq!(morning["description"], Value::Null);
-    assert_eq!(morning["location_name"], Value::Null);
-    assert_eq!(morning["glat"], Value::Null);
-    assert_eq!(morning["radius"], Value::Null);
 
     let names: Vec<_> = list(&f, &f.admin, "")
         .await
@@ -317,8 +286,6 @@ async fn legacy_rows_are_read_leniently() {
     .expect("insert legacy shift");
     let items = list(&f, &f.admin, "").await;
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["glat"], Value::Null);
-    assert_eq!(items[0]["radius"], Value::Null);
     assert_eq!(items[0]["description"], Value::Null);
 }
 
@@ -413,10 +380,7 @@ async fn names_are_unique_per_group_ignoring_case() {
 async fn put_replaces_the_whole_shift() {
     let f = fixture().await;
     let mut full = body("Pagi", "07:00", "15:00");
-    full["location_name"] = json!("Pos");
-    full["glat"] = json!(1.5);
-    full["glong"] = json!(2.5);
-    full["radius"] = json!(50);
+    full["description"] = json!("Catatan");
     let shift = create(&f, &full).await;
     let uid = shift["uid"].as_str().expect("uid");
     let (status, res) = call(
@@ -431,9 +395,7 @@ async fn put_replaces_the_whole_shift() {
     assert_eq!(res["message"], "Shift berhasil diperbarui");
     assert_eq!(res["data"]["name"], "Pagi 2");
     assert_eq!(res["data"]["start_time"], "06:30");
-    assert_eq!(res["data"]["location_name"], Value::Null);
-    assert_eq!(res["data"]["glat"], Value::Null);
-    assert_eq!(res["data"]["radius"], Value::Null);
+    assert_eq!(res["data"]["description"], Value::Null);
     let (status, _) = call(
         &f,
         "PUT",

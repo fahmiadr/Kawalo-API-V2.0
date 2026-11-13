@@ -276,3 +276,30 @@ async fn default_range_starts_today_and_spans_30_days() {
     let ids: Vec<_> = rows.iter().map(|r| r["id"].as_str().expect("id")).collect();
     assert_eq!(ids, [first.to_string(), last.to_string()]);
 }
+
+#[tokio::test]
+async fn the_group_attendance_point_replaces_the_shift_location() {
+    let f = fixture().await;
+    let db = &f.app.state.db;
+    let (g, shift) = (&f.group, format!("sh{}", unique()));
+    insert_shift(db, g, &shift, "Shift Pagi", (8, 0), "Pos 1").await;
+    insert_schedule(db, g, &f.email, &shift, (2026, 6, 30), "N/A", 0).await;
+    let range = "?from=2026-06-30&to=2026-06-30";
+    assert_eq!(get(&f, range).await[0]["location_name"], "Pos 1");
+
+    let insert = |name: &'static str| {
+        sqlx::query(
+            "INSERT INTO tkattendancelocation (GroupUID, LocName, LocLat, LocLong, LocRadius, \
+             UpdatedBy) VALUES (?, ?, -6.2, 106.8, 50, 'admin@test.id') \
+             ON DUPLICATE KEY UPDATE LocName = VALUES(LocName)",
+        )
+        .bind(g)
+        .bind(name)
+        .execute(db)
+    };
+    insert("Gerbang Barat").await.expect("group point");
+    assert_eq!(get(&f, range).await[0]["location_name"], "Gerbang Barat");
+    // A group point without a name hides the shift's name too: the point wins as a whole.
+    insert("N/A").await.expect("unnamed group point");
+    assert!(get(&f, range).await[0]["location_name"].is_null());
+}

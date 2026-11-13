@@ -1,10 +1,12 @@
 //! `GET /attendance`: attendance log of the caller's active group; check-in/out with face
 //! verification, its nonce and photo, manual requests for when the face fails, and the summary
-//! for reports.
+//! for reports. The group's attendance point (geofence) lives in `location`.
 
 mod check;
 mod check_repository;
 mod entity;
+mod location;
+mod location_repository;
 mod manual;
 mod manual_repository;
 mod repository;
@@ -32,6 +34,10 @@ pub fn router() -> Router<AppState> {
         .route("/attendance/nonce", post(check::nonce))
         .route("/attendance/stats", get(stats::stats))
         .route("/attendance/settings", get(setting::get).put(setting::put))
+        .route(
+            "/attendance/location",
+            get(location::get).put(location::put),
+        )
         .route("/attendance/{id}/photo", get(check::photo))
         .route(
             "/attendance/manual-requests",
