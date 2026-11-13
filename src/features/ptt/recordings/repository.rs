@@ -31,13 +31,15 @@ pub struct RecordingRow {
     pub transcript_source: Option<String>,
     #[sqlx(rename = "TranscriptStatus")]
     pub transcript_status: Option<String>,
+    #[sqlx(rename = "Waveform")]
+    pub waveform: Option<Vec<u8>>,
 }
 
 macro_rules! columns {
     () => {
         "RecordingUID, SpeakerUserId, SpeakerEmail, SpeakerName, SpeakerRole, StartedAt, \
          DurationMs, SizeBytes, FilePath, Transcript, TranscriptLocale, TranscriptSource, \
-         TranscriptStatus"
+         TranscriptStatus, Waveform"
     };
 }
 
@@ -54,13 +56,14 @@ pub struct NewRecording<'a> {
     pub duration_ms: i32,
     pub size_bytes: i32,
     pub file_path: &'a str,
+    pub waveform: Option<&'a [u8]>,
 }
 
 pub async fn insert(db: &MySqlPool, new: &NewRecording<'_>) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO tkpttrecording (RecordingUID, GroupUID, SpeakerUserId, SpeakerEmail, \
-         SpeakerName, SpeakerRole, RequestId, StartedAt, DurationMs, SizeBytes, FilePath) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         SpeakerName, SpeakerRole, RequestId, StartedAt, DurationMs, SizeBytes, FilePath, \
+         Waveform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&new.id)
     .bind(new.group_uid)
@@ -73,6 +76,7 @@ pub async fn insert(db: &MySqlPool, new: &NewRecording<'_>) -> sqlx::Result<()> 
     .bind(new.duration_ms)
     .bind(new.size_bytes)
     .bind(new.file_path)
+    .bind(new.waveform)
     .execute(db)
     .await?;
     Ok(())

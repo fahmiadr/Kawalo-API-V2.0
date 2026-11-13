@@ -17,6 +17,10 @@
 //!   can make the encoder emit.
 //!
 //! Passthrough packets are assumed to carry 20 ms for sequence-gap accounting.
+//!
+//! Alongside the audio the encoder keeps one loudness value per 20 ms frame, from which
+//! [`TurnEncoder::waveform`] derives the bars the app draws. Passthrough packets are never
+//! decoded, so a turn that contains any has no waveform.
 
 mod opus;
 
@@ -30,6 +34,13 @@ use opus::{Encoder, EncoderSettings, FRAME_SAMPLES, SAMPLE_RATE};
 /// One frame lasts 20 ms: 960 samples at the 48 kHz granule rate.
 const FRAME_48K: u64 = 960;
 const PCM_PAYLOAD_BYTES: usize = FRAME_SAMPLES * 2;
+
+/// Bars per waveform. 48 bytes are 64 base64 characters without padding on the wire.
+pub const WAVEFORM_BARS: usize = 48;
+
+/// Frame RMS that maps to a full bar when nothing in the turn is louder. Without this floor a
+/// turn of background hiss would be stretched to look like speech.
+const WAVEFORM_FULL_SCALE_FLOOR: u16 = 1_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -102,6 +113,9 @@ pub struct TurnEncoder<W: Write> {
     held: Option<(Vec<u8>, u64)>,
     encoded_pcm: bool,
     accepted: u32,
+    /// RMS per emitted 20 ms frame, silence fill included; `None` once a passthrough packet
+    /// arrives.
+    levels: Option<Vec<u16>>,
 }
 
 impl<W: Write> TurnEncoder<W> {
@@ -136,6 +150,7 @@ impl<W: Write> TurnEncoder<W> {
             held: None,
             encoded_pcm: false,
             accepted: 0,
+            levels: Some(Vec::new()),
         })
     }
 
@@ -167,6 +182,7 @@ impl<W: Write> TurnEncoder<W> {
 
         for _ in 0..silence / FRAME_48K {
             self.encode_pcm(&[0; FRAME_SAMPLES])?;
+            self.record_level(Some(0));
         }
         match kind {
             Payload::Pcm => {
@@ -175,8 +191,12 @@ impl<W: Write> TurnEncoder<W> {
                     *s = i16::from_le_bytes(*b);
                 }
                 self.encode_pcm(&pcm)?;
+                self.record_level(Some(frame_rms(&pcm)));
             }
-            Payload::Opus => self.emit(frame.payload.to_vec(), duration)?,
+            Payload::Opus => {
+                self.emit(frame.payload.to_vec(), duration)?;
+                self.record_level(None);
+            }
         }
         self.next_seq = Some(frame.sequence.wrapping_add(1));
         self.accepted += 1;
@@ -190,6 +210,24 @@ impl<W: Write> TurnEncoder<W> {
     /// Audio duration so far in milliseconds, silence included.
     pub fn duration_ms(&self) -> u64 {
         self.position / 48
+    }
+
+    /// Loudness bars `0..=255` over the whole turn, or `None` when the turn is empty or holds
+    /// passthrough Opus packets. Values are relative to the loudest frame (but never stretched
+    /// beyond [`WAVEFORM_FULL_SCALE_FLOOR`]), like the voice-note bars of a messaging app.
+    pub fn waveform(&self) -> Option<[u8; WAVEFORM_BARS]> {
+        waveform(self.levels.as_deref()?)
+    }
+
+    fn record_level(&mut self, level: Option<u16>) {
+        match level {
+            Some(level) => {
+                if let Some(levels) = self.levels.as_mut() {
+                    levels.push(level);
+                }
+            }
+            None => self.levels = None,
+        }
     }
 
     /// Flushes the encoder delay, writes the last page with the end-of-stream flag and returns
@@ -240,6 +278,34 @@ impl<W: Write> TurnEncoder<W> {
 enum Payload {
     Pcm,
     Opus,
+}
+
+fn frame_rms(pcm: &[i16; FRAME_SAMPLES]) -> u16 {
+    let sum: f64 = pcm.iter().map(|&s| f64::from(s).powi(2)).sum();
+    (sum / FRAME_SAMPLES as f64).sqrt() as u16
+}
+
+/// Each bar is the loudest frame of its slice of the turn. A turn shorter than
+/// [`WAVEFORM_BARS`] frames repeats frames across neighbouring bars.
+fn waveform(levels: &[u16]) -> Option<[u8; WAVEFORM_BARS]> {
+    if levels.is_empty() {
+        return None;
+    }
+    let n = levels.len();
+    let full = levels
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .max(WAVEFORM_FULL_SCALE_FLOOR);
+    let mut bars = [0u8; WAVEFORM_BARS];
+    for (i, bar) in bars.iter_mut().enumerate() {
+        let start = i * n / WAVEFORM_BARS;
+        let end = ((i + 1) * n / WAVEFORM_BARS).max(start + 1);
+        let peak = levels[start..end].iter().copied().max().unwrap_or(0);
+        *bar = (u32::from(peak) * 255 / u32::from(full)) as u8;
+    }
+    Some(bars)
 }
 
 /// Convenience for a turn that is already complete in memory.

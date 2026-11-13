@@ -1,7 +1,7 @@
 //! Query and response shapes for `/ptt/recordings` (snake_case, like the other features).
 
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +79,9 @@ pub struct RecordingItem {
     pub transcript_locale: Option<String>,
     pub transcript_source: Option<String>,
     pub transcript_status: Option<String>,
+    /// Base64 of `WAVEFORM_BARS` loudness bytes (0..=255) over the turn; `null` for turns
+    /// recorded before waveforms existed or holding passthrough Opus.
+    pub waveform: Option<String>,
 }
 
 impl From<RecordingRow> for RecordingItem {
@@ -99,6 +102,7 @@ impl From<RecordingRow> for RecordingItem {
             transcript_locale: row.transcript_locale,
             transcript_source: row.transcript_source,
             transcript_status: row.transcript_status,
+            waveform: row.waveform.map(|bars| STANDARD.encode(bars)),
         }
     }
 }

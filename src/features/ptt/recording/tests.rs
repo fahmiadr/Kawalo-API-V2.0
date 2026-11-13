@@ -485,3 +485,91 @@ fn extreme_pcm_is_encoded_and_decodes() {
     let decoded = decode_all(&parsed.packets, 16_000);
     assert!(decoded.len() >= 300 * FRAME_SAMPLES);
 }
+
+fn turn_with(frames: &[(u16, u32, Vec<u8>)]) -> TurnEncoder<Vec<u8>> {
+    let mut turn = TurnEncoder::new(Vec::new(), SERIAL, Config::default()).unwrap();
+    for (sequence, offset_ms, payload) in frames {
+        turn.push(TurnFrame {
+            sequence: *sequence,
+            offset_ms: *offset_ms,
+            payload,
+        })
+        .unwrap();
+    }
+    turn
+}
+
+fn constant_frame(sequence: u16, amplitude: i16) -> (u16, u32, Vec<u8>) {
+    let bytes = (0..FRAME_SAMPLES)
+        .flat_map(|n| (if n % 2 == 0 { amplitude } else { -amplitude }).to_le_bytes())
+        .collect();
+    (sequence, u32::from(sequence) * 20, bytes)
+}
+
+#[test]
+fn waveform_follows_loudness_over_time() {
+    // 1 s loud, 1 s silent (sent as zeros), 1 s at half level.
+    let frames: Vec<_> = (0..150u16)
+        .map(|i| match i / 50 {
+            0 => constant_frame(i, 8_000),
+            1 => constant_frame(i, 0),
+            _ => constant_frame(i, 4_000),
+        })
+        .collect();
+    let bars = turn_with(&frames)
+        .waveform()
+        .expect("pcm turn has a waveform");
+    assert_eq!(bars.len(), WAVEFORM_BARS);
+    assert!(bars[..16].iter().all(|&b| b == 255), "{bars:?}");
+    assert!(bars[17..32].iter().all(|&b| b == 0), "{bars:?}");
+    assert!(
+        bars[33..].iter().all(|&b| (126..=129).contains(&b)),
+        "{bars:?}"
+    );
+}
+
+#[test]
+fn waveform_counts_a_pause_as_silence() {
+    // Two loud frames 2 s apart: the gap is filled with silence, and so are the bars.
+    let frames = [
+        constant_frame(0, 8_000),
+        (1, 2_000, constant_frame(1, 8_000).2),
+    ];
+    let bars = turn_with(&frames).waveform().expect("waveform");
+    assert_eq!(bars[0], 255);
+    assert_eq!(bars[WAVEFORM_BARS - 1], 255);
+    assert!(
+        bars[2..WAVEFORM_BARS - 2].iter().all(|&b| b == 0),
+        "{bars:?}"
+    );
+}
+
+#[test]
+fn quiet_hiss_is_not_stretched_to_full_bars() {
+    let frames: Vec<_> = (0..50u16).map(|i| constant_frame(i, 100)).collect();
+    let bars = turn_with(&frames).waveform().expect("waveform");
+    assert!(bars.iter().all(|&b| b < 30), "{bars:?}");
+}
+
+#[test]
+fn a_turn_shorter_than_the_bar_count_still_fills_every_bar() {
+    let frames: Vec<_> = (0..5u16).map(|i| constant_frame(i, 8_000)).collect();
+    let bars = turn_with(&frames).waveform().expect("waveform");
+    assert!(bars.iter().all(|&b| b == 255), "{bars:?}");
+}
+
+#[test]
+fn no_waveform_without_audio_or_for_passthrough_packets() {
+    assert!(turn_with(&[]).waveform().is_none());
+
+    let mut enc = Encoder::new(EncoderSettings {
+        bitrate_bps: 24_000,
+        complexity: 5,
+        vbr: true,
+        dtx: false,
+    })
+    .unwrap();
+    let packet = enc.encode(&[0; FRAME_SAMPLES]).unwrap();
+    let frames = [constant_frame(0, 8_000), (1, 20, packet)];
+    assert!(turn_with(&frames).waveform().is_none());
+}

@@ -178,6 +178,7 @@ impl Recorder {
         }
 
         let duration_ms = encoder.duration_ms();
+        let waveform = encoder.waveform();
         let root = Arc::clone(&self.root);
         let saved = tokio::task::spawn_blocking(move || {
             let bytes = encoder.finish()?;
@@ -211,6 +212,7 @@ impl Recorder {
             duration_ms: i32::try_from(duration_ms).unwrap_or(i32::MAX),
             size_bytes: i32::try_from(size).unwrap_or(i32::MAX),
             file_path: &relative,
+            waveform: waveform.as_ref().map(|bars| bars.as_slice()),
         };
         if let Err(err) = repository::insert(&self.db, &new).await {
             tracing::warn!(error = %err, "[PTT] could not insert a recording row");

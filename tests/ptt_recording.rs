@@ -15,6 +15,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use base64::Engine;
 use chrono::{DateTime, SubsecRound, Utc};
 use common::TestApp;
 use http_body_util::BodyExt;
@@ -298,6 +299,12 @@ mod recording {
         let duration = item["duration_ms"].as_i64().expect("duration");
         assert!((980..=1100).contains(&duration), "duration {duration}");
         assert!(item["started_at"].as_str().expect("date").ends_with('Z'));
+        // A steady tone: every bar is the loudest frame of its slice, so all are full.
+        let bars = base64::engine::general_purpose::STANDARD
+            .decode(item["waveform"].as_str().expect("waveform"))
+            .expect("base64");
+        assert_eq!(bars.len(), 48);
+        assert!(bars.iter().all(|&b| b >= 250), "{bars:?}");
         assert_eq!(
             audio_url(item),
             format!(
@@ -508,6 +515,8 @@ mod listing {
         // Exactly one full page: no cursor for a page that ends the history.
         let (_, json) = rig.list(&guard, "?limit=5").await;
         assert_eq!(json["data"]["items"].as_array().expect("items").len(), 5);
+        // Rows saved without a waveform (all turns before it existed) say so with null.
+        assert!(json["data"]["items"][0]["waveform"].is_null());
         assert!(json["data"]["next_before"].is_null());
     }
 
