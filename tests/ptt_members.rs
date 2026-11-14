@@ -29,6 +29,7 @@ fn member(squad: &Squad, who: &str, role: &str, speaking: bool) -> Value {
         "user_id": format!("{}@kawalo.test", squad.user(who)),
         "name": squad.user(who),
         "role": role,
+        "avatar_url": null,
         "speaking": speaking,
     })
 }
@@ -119,4 +120,41 @@ async fn needs_a_token() {
     let app = TestApp::start().await;
     let (status, json) = app.call("GET", "/api/v1/ptt/members", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{json}");
+}
+
+#[tokio::test]
+async fn a_member_carries_the_profile_photo_of_the_user_row() {
+    let app = TestApp::start().await;
+    let addr = app.serve().await;
+    let squad = Squad::new();
+    let id = sqlx::query(
+        "INSERT INTO tkuser (UserUID, UserEmail, UserName, Password, UserProfilePic) \
+         VALUES (?, ?, 'Sari', 'x', 'http://h/uploads/sari.webp')",
+    )
+    .bind(format!("uid-{}", squad.tag))
+    .bind(format!("sari-{}@kawalo.test", squad.tag))
+    .execute(&app.state.db)
+    .await
+    .expect("insert user")
+    .last_insert_id()
+    .to_string();
+    let sari = custom_token(&app, &id, "GUARD", Some(&squad.group), 0).await;
+    // A speaker whose id is not a user row (like the other tests) simply has no photo.
+    let budi = squad.token(&app, "budi", false).await;
+    let mut sari_ws = join(addr, &squad.group, &sari).await;
+    sari_ws.json().await;
+    let mut budi_ws = join(addr, &squad.group, &budi).await;
+    budi_ws.json().await;
+
+    let list = members(&app, &budi).await;
+    let photo = |name: &str| {
+        list.as_array()
+            .expect("array")
+            .iter()
+            .find(|m| m["name"] == name)
+            .expect("member")["avatar_url"]
+            .clone()
+    };
+    assert_eq!(photo(&id), json!("http://h/uploads/sari.webp"));
+    assert_eq!(photo(&squad.user("budi")), Value::Null);
 }

@@ -15,6 +15,7 @@ use axum::routing::get;
 
 use crate::core::state::AppState;
 
+mod avatars;
 mod frames;
 mod members;
 mod recorder;

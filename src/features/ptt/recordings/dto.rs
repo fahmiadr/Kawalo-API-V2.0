@@ -63,6 +63,7 @@ pub struct Speaker {
     pub name: String,
     pub role: String,
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +95,7 @@ impl From<RecordingRow> for RecordingItem {
                 name: row.speaker_name,
                 role: row.speaker_role,
                 email: row.speaker_email,
+                avatar_url: None,
             },
             started_at: iso_string(row.started_at),
             duration_ms: row.duration_ms,

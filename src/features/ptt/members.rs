@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::routing::get;
 use serde::Serialize;
 
+use super::avatars;
 use super::store::FloorStore;
 use crate::core::error::ApiError;
 use crate::core::extract::CurrentUser;
@@ -16,6 +17,7 @@ pub struct MemberItem {
     user_id: String,
     name: String,
     role: String,
+    avatar_url: Option<String>,
     speaking: bool,
 }
 
@@ -37,12 +39,15 @@ async fn list(user: CurrentUser, State(state): State<AppState>) -> ApiResult<Mem
         .await
         .map_err(ApiError::internal)?;
     let speaker = floor.as_ref().map(|s| s.user_id.as_str());
+    let mut avatars =
+        avatars::by_user_id(&state.db, members.iter().map(|m| m.user_id.as_str())).await?;
     ok(
         MemberList {
             members: members
                 .into_iter()
                 .map(|m| MemberItem {
                     speaking: speaker == Some(m.user_id.as_str()),
+                    avatar_url: avatars.remove(&m.user_id),
                     user_id: m.user_id,
                     name: m.name,
                     role: m.role,

@@ -456,6 +456,50 @@ mod listing {
     use super::*;
 
     #[tokio::test]
+    async fn a_speaker_carries_the_current_profile_photo_of_the_user_row() {
+        let rig = Rig::new().await;
+        let guard = rig.guard("budi").await;
+        let tag = Uuid::new_v4().simple().to_string();
+        let user_id = sqlx::query(
+            "INSERT INTO tkuser (UserUID, UserEmail, UserName, Password, UserProfilePic) \
+             VALUES (?, ?, 'Sari', 'x', 'http://h/uploads/sari.webp')",
+        )
+        .bind(format!("uid-{tag}"))
+        .bind(format!("sari-{tag}@kawalo.test"))
+        .execute(&rig.app.state.db)
+        .await
+        .expect("insert user")
+        .last_insert_id()
+        .to_string();
+        let base = Utc::now().trunc_subsecs(3) - chrono::Duration::hours(1);
+        rig.insert(rig.group(), &format!("rec_{tag}_a"), base, "ptt/x.opus")
+            .await;
+        sqlx::query("UPDATE tkpttrecording SET SpeakerUserId = ? WHERE RecordingUID = ?")
+            .bind(&user_id)
+            .bind(format!("rec_{tag}_a"))
+            .execute(&rig.app.state.db)
+            .await
+            .expect("point row at the user");
+        rig.insert(
+            rig.group(),
+            &format!("rec_{tag}_b"),
+            base + chrono::Duration::seconds(1),
+            "ptt/x.opus",
+        )
+        .await;
+
+        let (status, json) = rig.list(&guard, "").await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        let items = json["data"]["items"].as_array().expect("items");
+        // Newest first: the row of a speaker that is no user row has no photo.
+        assert_eq!(items[0]["speaker"]["avatar_url"], Value::Null);
+        assert_eq!(
+            items[1]["speaker"]["avatar_url"],
+            json!("http://h/uploads/sari.webp")
+        );
+    }
+
+    #[tokio::test]
     async fn pages_newest_first_by_cursor_and_stays_in_the_group() {
         let rig = Rig::new().await;
         let guard = rig.guard("budi").await;

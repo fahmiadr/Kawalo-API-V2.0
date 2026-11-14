@@ -21,6 +21,7 @@ use crate::core::error::ApiError;
 use crate::core::extract::{AuthedJson, CurrentUser, ValidatedQuery, ValidationErrors};
 use crate::core::response::{ApiResult, ok};
 use crate::core::state::AppState;
+use crate::features::ptt::avatars;
 
 const MSG_NOT_FOUND: &str = "Rekaman tidak ditemukan.";
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -66,13 +67,18 @@ pub async fn list(
         .then(|| rows.last())
         .flatten()
         .map(|last| encode_cursor(last.started_at, &last.id));
-    ok(
-        RecordingPage {
-            items: rows.into_iter().map(RecordingItem::from).collect(),
-            next_before,
-        },
-        MESSAGE,
-    )
+    let avatars =
+        avatars::by_user_id(&state.db, rows.iter().map(|r| r.speaker_user_id.as_str())).await?;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let avatar_url = avatars.get(&row.speaker_user_id).cloned();
+            let mut item = RecordingItem::from(row);
+            item.speaker.avatar_url = avatar_url;
+            item
+        })
+        .collect();
+    ok(RecordingPage { items, next_before }, MESSAGE)
 }
 
 /// Only the speaker of the turn may write, and a recording that is not theirs (or not written
