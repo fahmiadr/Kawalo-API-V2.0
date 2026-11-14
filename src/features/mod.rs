@@ -6,6 +6,7 @@ pub mod auth;
 pub mod faces;
 pub mod group;
 pub mod guest;
+pub mod home_layout;
 pub mod incident;
 pub mod information;
 pub mod operational;

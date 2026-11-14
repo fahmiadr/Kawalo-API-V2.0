@@ -238,6 +238,16 @@ model tkguest {
   @@index([GuestGroupUID, GuestDT], map: "idx_tkguest_group_dt")
 }
 
+/// Home screen card layout per user and active group; Layout = JSON {"order": [...], "hidden": [...]}.
+model tkhomelayout {
+  UserEmail String   @db.VarChar(128)
+  GroupUID  String   @db.VarChar(64)
+  Layout    String   @db.Text
+  UpdatedAt DateTime @default(now()) @db.DateTime(0)
+
+  @@id([UserEmail, GroupUID])
+}
+
 model tkincident {
   IncidentUID     String    @id @db.VarChar(64)
   GroupUID        String    @db.VarChar(64)

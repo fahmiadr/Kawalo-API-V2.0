@@ -42,6 +42,7 @@ pub fn build_app_with(state: AppState, extra: Router<AppState>) -> Router {
         .merge(features::auth::router())
         .merge(features::group::router())
         .merge(features::guest::router())
+        .merge(features::home_layout::router())
         .merge(features::operational::router())
         .merge(features::attendance::router())
         .merge(features::faces::router())
